@@ -1,0 +1,26 @@
+# CSI-S3 StorageClass (yandex-cloud/k8s-csi-s3, geesefs mounter)
+# MinIO S3 버킷을 K8s PV로 마운트
+# 참고: https://github.com/yandex-cloud/k8s-csi-s3
+#
+# 사전 조건:
+# 1. csi-s3 드라이버 설치 (kube-system 네임스페이스)
+# 2. csi-s3-secret 생성 (k8s/base/secret.yaml 참고)
+# 3. MinIO bucket 생성 (omniverse)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: csi-s3-minio
+provisioner: ru.yandex.s3.csi
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+parameters:
+  mounter: geesefs
+  options: "--memory-limit 1000 --dir-mode 0777 --file-mode 0666"
+  # Secret 참조 (kube-system의 csi-s3-secret)
+  csi.storage.k8s.io/provisioner-secret-name: csi-s3-secret
+  csi.storage.k8s.io/provisioner-secret-namespace: kube-system
+  csi.storage.k8s.io/node-stage-secret-name: csi-s3-secret
+  csi.storage.k8s.io/node-stage-secret-namespace: kube-system
+  csi.storage.k8s.io/node-publish-secret-name: csi-s3-secret
+  csi.storage.k8s.io/node-publish-secret-namespace: kube-system

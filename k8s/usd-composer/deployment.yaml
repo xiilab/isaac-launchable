@@ -1,0 +1,154 @@
+# USD Composer (usd-composer-sample:109.0.4) - Omniverse Kit 웹 스트리밍
+# 접속: http://10.61.3.126/ (nginx-community Ingress) → /viewer/ 자동 리다이렉트
+# WebRTC: ws-node074:47999/UDP (media), 49100/TCP (signal - Pod 내부)
+#
+# initContainer: NFS PVC 권한 fix (ubuntu uid=1000)
+# postStart: NVCF /v1/streaming/creds 초기화
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kit-streaming
+  namespace: isaac-launchable
+  labels:
+    app: isaac-launchable
+    instance: kit-streaming
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: isaac-launchable
+      instance: kit-streaming
+  template:
+    metadata:
+      labels:
+        app: isaac-launchable
+        instance: kit-streaming
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ws-node074
+      hostname: kit-streaming
+      subdomain: isaac-launchable-headless
+      dnsConfig:
+        searches:
+        - isaac-launchable-headless.isaac-launchable.svc.cluster.local
+      initContainers:
+      # usd-composer-sample는 ubuntu(uid=1000)로 실행되므로 NFS PVC 권한을 root로 미리 수정
+      - name: fix-nfs-perms
+        image: busybox:1.36
+        securityContext:
+          runAsUser: 0
+        command:
+        - sh
+        - -c
+        - >
+          chown -R 1000:1000 /home/ubuntu/.cache/ov /home/ubuntu/.local/share/ov &&
+          chmod -R 775 /home/ubuntu/.cache/ov /home/ubuntu/.local/share/ov &&
+          echo done
+        volumeMounts:
+        - name: ov-cache
+          mountPath: /home/ubuntu/.cache/ov
+        - name: ov-local-share
+          mountPath: /home/ubuntu/.local/share/ov
+      containers:
+      - name: kit-streaming
+        image: 10.61.3.124:30002/library/usd-composer-sample:109.0.4
+        env:
+        - name: ACCEPT_EULA
+          value: "Y"
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: all
+        - name: NVIDIA_GPU_CAPABILITIES
+          value: all
+        - name: NVDA_KIT_ARGS
+          value: >-
+            --/exts/omni.kit.livestream.app/primaryStream/streamPort=47999
+            --/exts/omni.kit.livestream.app/primaryStream/publicIp=10.61.3.74
+            --/exts/omni.services.livestream.session/quitOnSessionEnded=false
+            --/exts/omni.kit.window.content_browser/show_only_collections=[bookmarks,omniverse,my-computer]
+            --/exts/omni.kit.window.filepicker/show_only_collections=[bookmarks,omniverse,my-computer]
+            --/exts/omni.kit.window.filepicker/show_add_new_connection=true
+        - name: AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
+          value: hsscdns://memcached.isaac-launchable.svc.cluster.local
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                until curl -sf http://localhost:8011/v1/streaming/ready > /dev/null 2>&1; do sleep 3; done
+                curl -sf -X POST http://localhost:8011/v1/streaming/creds \
+                  -H 'Content-Type: application/json' \
+                  -d '{"stunIp":null,"stunPort":null,"username":null,"password":null}' || true
+        ports:
+        - name: webrtc-media
+          containerPort: 47999
+          hostPort: 47999
+          protocol: UDP
+        - name: webrtc-signal
+          containerPort: 49100
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "8"
+            memory: 16Gi
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "16"
+            memory: 32Gi
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: ov-cache
+          mountPath: /home/ubuntu/.cache/ov
+        - name: ov-local-share
+          mountPath: /home/ubuntu/.local/share/ov
+        - name: minio-omniverse
+          mountPath: /mnt/minio
+      - name: nginx
+        image: 10.61.3.124:30002/library/isaac-launchable-nginx:latest
+        ports:
+        - name: http
+          containerPort: 80
+        volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+          readOnly: true
+      - name: web-viewer
+        image: 10.61.3.124:30002/library/isaac-launchable-viewer:latest
+        env:
+        - name: ENV
+          valueFrom:
+            configMapKeyRef:
+              name: isaac-launchable-config
+              key: ENV
+        - name: FORCE_WSS
+          valueFrom:
+            configMapKeyRef:
+              name: isaac-launchable-config
+              key: FORCE_WSS
+        - name: SIGNALING_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: isaac-launchable-config
+              key: SIGNALING_PORT
+        - name: MEDIA_SERVER
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        ports:
+        - name: viewer
+          containerPort: 5173
+      volumes:
+      - name: ov-cache
+        persistentVolumeClaim:
+          claimName: kit-streaming-ov-cache-pvc
+      - name: ov-local-share
+        persistentVolumeClaim:
+          claimName: kit-streaming-ov-local-share-pvc
+      - name: nginx-conf
+        configMap:
+          name: nginx-config-kit-streaming
+      - name: minio-omniverse
+        persistentVolumeClaim:
+          claimName: minio-omniverse-pvc

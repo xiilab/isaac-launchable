@@ -1,0 +1,66 @@
+---
+# Headless 서비스: Pod 간 DNS 등록 (isaac-launchable-headless.isaac-launchable.svc.cluster.local)
+apiVersion: v1
+kind: Service
+metadata:
+  name: isaac-launchable-headless
+  namespace: isaac-launchable
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: isaac-launchable
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+---
+# Isaac Sim (Pod-0) ClusterIP 서비스
+apiVersion: v1
+kind: Service
+metadata:
+  name: isaac-launchable-svc-0
+  namespace: isaac-launchable
+spec:
+  type: ClusterIP
+  selector:
+    app: isaac-launchable
+    instance: pod-0
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+---
+# USD Composer (kit-streaming) ClusterIP 서비스
+apiVersion: v1
+kind: Service
+metadata:
+  name: kit-streaming-svc
+  namespace: isaac-launchable
+spec:
+  type: ClusterIP
+  selector:
+    app: isaac-launchable
+    instance: kit-streaming
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+---
+# Memcached 헤드리스 서비스 (셰이더 캐시 공유)
+# hsscdns://memcached.isaac-launchable.svc.cluster.local 형식으로 참조
+apiVersion: v1
+kind: Service
+metadata:
+  name: memcached
+  namespace: isaac-launchable
+  labels:
+    app: memcached
+spec:
+  clusterIP: None
+  selector:
+    app: memcached
+  ports:
+  - name: memcached
+    port: 11211
+    targetPort: 11211

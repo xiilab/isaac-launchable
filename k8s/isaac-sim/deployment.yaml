@@ -1,0 +1,147 @@
+# Isaac Sim 6.0 + Isaac Lab 2.1.1 - VSCode 개발 환경 + Kit 스트리밍
+# 접속: http://10.61.3.125/ (nginx-ovas Ingress)
+# WebRTC: ws-node074:47998/UDP (media), ws-node074:49100/TCP (signal)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: isaac-launchable-0
+  namespace: isaac-launchable
+  labels:
+    app: isaac-launchable
+    instance: pod-0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: isaac-launchable
+      instance: pod-0
+  template:
+    metadata:
+      labels:
+        app: isaac-launchable
+        instance: pod-0
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ws-node074
+      hostname: isaac-launchable-0
+      subdomain: isaac-launchable-headless
+      dnsConfig:
+        searches:
+        - isaac-launchable-headless.isaac-launchable.svc.cluster.local
+      containers:
+      - name: vscode
+        image: 10.61.3.124:30002/library/isaac-launchable-vscode:6.0.0
+        env:
+        - name: ACCEPT_EULA
+          value: "Y"
+        - name: OMNI_KIT_ALLOW_ROOT
+          value: "1"
+        - name: ISAACSIM_STREAM_PORT
+          value: "47998"
+        - name: ISAACSIM_SIGNAL_PORT
+          value: "49100"
+        - name: AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
+          value: hsscdns://memcached.isaac-launchable.svc.cluster.local
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: all
+        - name: NVIDIA_GPU_CAPABILITIES
+          value: all
+        - name: DEFAULT_WORKSPACE
+          value: /config/workspace
+        - name: PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: isaac-launchable-secret
+              key: VSCODE_PASSWORD
+        - name: SUDO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: isaac-launchable-secret
+              key: VSCODE_PASSWORD
+        ports:
+        - name: vscode
+          containerPort: 8080
+        - name: webrtc-media
+          containerPort: 47998
+          hostPort: 47998
+          protocol: UDP
+        - name: webrtc-signal
+          containerPort: 49100
+          hostPort: 49100
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "8"
+            memory: 16Gi
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "16"
+            memory: 32Gi
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: ov-cache
+          mountPath: /root/.cache/ov
+        - name: ov-local-share
+          mountPath: /root/.local/share/ov
+        - name: workspace-data
+          mountPath: /workspace/data
+        - name: runheadless-script
+          mountPath: /isaac-sim/runheadless.sh
+          subPath: runheadless.sh
+        - name: minio-omniverse
+          mountPath: /mnt/minio
+      - name: nginx
+        image: 10.61.3.124:30002/library/isaac-launchable-nginx:latest
+        ports:
+        - name: http
+          containerPort: 80
+        volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+          readOnly: true
+      - name: web-viewer
+        image: 10.61.3.124:30002/library/isaac-launchable-viewer:latest
+        env:
+        - name: ENV
+          valueFrom:
+            configMapKeyRef:
+              name: isaac-launchable-config
+              key: ENV
+        - name: FORCE_WSS
+          valueFrom:
+            configMapKeyRef:
+              name: isaac-launchable-config
+              key: FORCE_WSS
+        - name: SIGNALING_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: isaac-launchable-config
+              key: SIGNALING_PORT
+        - name: MEDIA_SERVER
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        ports:
+        - name: viewer
+          containerPort: 5173
+      volumes:
+      - name: ov-cache
+        persistentVolumeClaim:
+          claimName: isaac-ov-cache-pvc-0
+      - name: ov-local-share
+        persistentVolumeClaim:
+          claimName: isaac-ov-local-share-pvc-0
+      - name: workspace-data
+        persistentVolumeClaim:
+          claimName: isaac-workspace-pvc-0
+      - name: nginx-conf
+        configMap:
+          name: nginx-config-0
+      - name: runheadless-script
+        configMap:
+          name: runheadless-script-0
+          defaultMode: 0755
+      - name: minio-omniverse
+        persistentVolumeClaim:
+          claimName: minio-omniverse-pvc

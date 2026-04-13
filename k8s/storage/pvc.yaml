@@ -1,0 +1,16 @@
+# MinIO omniverse 버킷 PVC
+# minio-omniverse-pv에 정적 바인딩 (volumeName 명시)
+# 마운트 경로: /mnt/minio (isaac-launchable-0, kit-streaming 공유)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-omniverse-pvc
+  namespace: isaac-launchable
+spec:
+  storageClassName: csi-s3-minio
+  volumeName: minio-omniverse-pv
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi

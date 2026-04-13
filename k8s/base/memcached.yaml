@@ -1,0 +1,47 @@
+# Memcached - 셰이더 캐시 공유 서버
+# AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER=hsscdns://memcached.isaac-launchable.svc.cluster.local
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memcached
+  namespace: isaac-launchable
+  labels:
+    app: memcached
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memcached
+  template:
+    metadata:
+      labels:
+        app: memcached
+    spec:
+      containers:
+      - name: memcached
+        image: memcached:1.6-alpine
+        args:
+        - -m
+        - "4096"   # 4GB 메모리 캐시
+        - -I
+        - 1024m    # 최대 아이템 크기 1GB
+        ports:
+        - name: memcached
+          containerPort: 11211
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+          limits:
+            cpu: "2"
+            memory: 5Gi
+        livenessProbe:
+          tcpSocket:
+            port: 11211
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 11211
+          initialDelaySeconds: 5
+          periodSeconds: 5

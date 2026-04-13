@@ -1,0 +1,29 @@
+# USD Composer Ingress (nginx-community, MetalLB 10.61.3.126)
+# host 미지정 = 모든 요청 catch (IP 직접 접근)
+# / → kit-streaming-svc:80 → nginx → /viewer/
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kit-streaming-ingress
+  namespace: isaac-launchable
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+spec:
+  ingressClassName: nginx-community
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kit-streaming-svc
+            port:
+              number: 80

@@ -1,0 +1,34 @@
+# MinIO omniverse 버킷 → K8s PersistentVolume
+# CRITICAL: volumeHandle은 실제 MinIO 버킷 이름과 일치해야 함
+# geesefs가 volumeHandle을 버킷 이름으로 사용 (format: bucket:prefix)
+#
+# 트러블슈팅:
+# - ls hang: volumeHandle이 존재하지 않는 버킷을 가리킴
+# - CSI endpoint empty: nodeStageSecretRef / controllerPublishSecretRef 누락
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-omniverse-pv
+spec:
+  storageClassName: csi-s3-minio
+  capacity:
+    storage: 100Gi
+  accessModes:
+  - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  csi:
+    driver: ru.yandex.s3.csi
+    volumeHandle: omniverse   # MinIO 버킷 이름 (변경 시 PV 재생성 필요)
+    volumeAttributes:
+      bucket: omniverse
+      mounter: geesefs
+      options: "--memory-limit 1000 --dir-mode 0777 --file-mode 0666"
+    nodePublishSecretRef:
+      name: csi-s3-secret
+      namespace: kube-system
+    nodeStageSecretRef:
+      name: csi-s3-secret
+      namespace: kube-system
+    controllerPublishSecretRef:
+      name: csi-s3-secret
+      namespace: kube-system

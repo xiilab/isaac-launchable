@@ -1,0 +1,72 @@
+# NFS PVC (astrago-nfs-csi StorageClass)
+# 셰이더 캐시 및 워크스페이스 볼륨
+---
+# Isaac Sim 셰이더 캐시 (/root/.cache/ov)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: isaac-ov-cache-pvc-0
+  namespace: isaac-launchable
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: astrago-nfs-csi
+---
+# Isaac Sim 로컬 쉐어 (/root/.local/share/ov)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: isaac-ov-local-share-pvc-0
+  namespace: isaac-launchable
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: astrago-nfs-csi
+---
+# Isaac Sim 워크스페이스 (/workspace/data)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: isaac-workspace-pvc-0
+  namespace: isaac-launchable
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: astrago-nfs-csi
+---
+# USD Composer 셰이더 캐시 (/home/ubuntu/.cache/ov)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kit-streaming-ov-cache-pvc
+  namespace: isaac-launchable
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: astrago-nfs-csi
+---
+# USD Composer 로컬 쉐어 (/home/ubuntu/.local/share/ov)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kit-streaming-ov-local-share-pvc
+  namespace: isaac-launchable
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: astrago-nfs-csi
