@@ -176,6 +176,12 @@ data:
       ln -sfn "$ext" "/isaac-sim/extsUser/$name"
     done
 
+    # Hide tutorial extensions by renaming their directories so Kit cannot find them
+    for tut in /isaac-sim/exts/isaacsim.robot_motion.motion_generation.tutorials \
+               /isaac-sim/exts/isaacsim.examples.extension; do
+      [ -d "$tut" ] && mv "$tut" "${tut}.disabled" 2>/dev/null || true
+    done
+
     EXTRA_FLAGS=""
     [ -n "${OMNI_SERVER}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/persistent/isaac/asset_root/default=${OMNI_SERVER}"
     [ -n "${ISAACSIM_HOST}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/publicIp=${ISAACSIM_HOST}"
@@ -184,7 +190,5 @@ data:
     /isaac-sim/license.sh && /isaac-sim/privacy.sh && /isaac-sim/isaac-sim.streaming.sh \
         --merge-config="/isaac-sim/config/open_endpoint.toml" \
         --enable omni.clipboard.service \
-        --/app/exts/excluded/0=isaacsim.robot_motion.motion_generation.tutorials \
-        --/exts/isaacsim.robot_motion.motion_generation.tutorials/autoload=false \
         $EXTRA_FLAGS \
         "$@"
