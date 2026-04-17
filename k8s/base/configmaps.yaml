@@ -176,11 +176,9 @@ data:
       ln -sfn "$ext" "/isaac-sim/extsUser/$name"
     done
 
-    # Hide tutorial extensions by renaming their directories so Kit cannot find them
-    for tut in /isaac-sim/exts/isaacsim.robot_motion.motion_generation.tutorials \
-               /isaac-sim/exts/isaacsim.examples.extension; do
-      [ -d "$tut" ] && mv "$tut" "${tut}.disabled" 2>/dev/null || true
-    done
+    # Hide tutorial extension so Example menus don't appear in the UI
+    tut=/isaac-sim/exts/isaacsim.robot_motion.motion_generation.tutorials
+    [ -d "$tut" ] && mv "$tut" "${tut}.disabled" 2>/dev/null || true
 
     EXTRA_FLAGS=""
     [ -n "${OMNI_SERVER}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/persistent/isaac/asset_root/default=${OMNI_SERVER}"
