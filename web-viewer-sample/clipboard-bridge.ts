@@ -149,11 +149,6 @@ export function initClipboardBridge(): void {
       e.stopPropagation();
       showPasteDialog();
     }
-    if (e.key === 'c') {
-      e.preventDefault();
-      e.stopPropagation();
-      showCopyDialog();
-    }
   }, true);
 
   console.info('[clipboard-bridge] Initialized (dialog mode)');
