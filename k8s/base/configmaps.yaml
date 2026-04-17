@@ -184,5 +184,6 @@ data:
     /isaac-sim/license.sh && /isaac-sim/privacy.sh && /isaac-sim/isaac-sim.streaming.sh \
         --merge-config="/isaac-sim/config/open_endpoint.toml" \
         --enable omni.clipboard.service \
+        --disable isaacsim.robot_motion.motion_generation.tutorials \
         $EXTRA_FLAGS \
         "$@"
