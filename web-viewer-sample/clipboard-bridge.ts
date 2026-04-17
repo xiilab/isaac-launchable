@@ -1,11 +1,8 @@
 /**
  * Clipboard Bridge: browser <-> Kit clipboard sharing via HTTP API
  *
- * HTTP 환경에서는 navigator.clipboard API가 차단되므로,
- * code-server 방식의 팝업 다이얼로그로 클립보드를 공유한다.
- *
- * Ctrl+V → 팝업에 텍스트를 붙여넣고 Enter → Kit에 전달
- * Ctrl+C → Kit 클립보드를 가져와서 팝업에 표시 → 사용자가 복사
+ * Paste (Ctrl+V): 보이지 않는 textarea로 paste 이벤트를 가로채서 Kit에 전달
+ * Copy (Ctrl+C): Kit 클립보드를 가져와서 팝업으로 표시
  */
 
 const CLIPBOARD_API = '/api/clipboard';
@@ -18,7 +15,7 @@ async function copyToKit(text: string): Promise<void> {
       body: JSON.stringify({ text }),
     });
   } catch (e) {
-    console.warn('[clipboard-bridge] Failed to copy to Kit:', e);
+    console.warn('[clipboard-bridge] copyToKit failed:', e);
   }
 }
 
@@ -28,7 +25,7 @@ async function pasteFromKit(): Promise<string> {
     const data = await res.json();
     return data.text || '';
   } catch (e) {
-    console.warn('[clipboard-bridge] Failed to paste from Kit:', e);
+    console.warn('[clipboard-bridge] pasteFromKit failed:', e);
     return '';
   }
 }
@@ -56,9 +53,7 @@ function injectStyles(): void {
       box-sizing: border-box;
     }
     .cb-dialog textarea:focus { outline: none; border-color: #007acc; }
-    .cb-dialog .cb-hint {
-      margin-top: 8px; font-size: 11px; color: #888;
-    }
+    .cb-dialog .cb-hint { margin-top: 8px; font-size: 11px; color: #888; }
     .cb-dialog .cb-btns {
       margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px;
     }
@@ -66,53 +61,52 @@ function injectStyles(): void {
       padding: 5px 14px; border-radius: 4px; border: none;
       font-size: 12px; cursor: pointer;
     }
-    .cb-dialog .cb-ok { background: #007acc; color: #fff; }
-    .cb-dialog .cb-ok:hover { background: #005f9e; }
     .cb-dialog .cb-cancel { background: #3c3c3c; color: #ccc; }
     .cb-dialog .cb-cancel:hover { background: #505050; }
   `;
   document.head.appendChild(style);
 }
 
-function showPasteDialog(): void {
-  const overlay = document.createElement('div');
-  overlay.className = 'cb-overlay';
-  overlay.innerHTML = `
-    <div class="cb-dialog">
-      <h3>Paste (Ctrl+V)</h3>
-      <textarea placeholder="여기에 텍스트를 붙여넣으세요 (Ctrl+V)"></textarea>
-      <div class="cb-hint">붙여넣기 후 Enter 또는 OK 클릭</div>
-      <div class="cb-btns">
-        <button class="cb-cancel">Cancel</button>
-        <button class="cb-ok">OK</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
+/**
+ * Paste: 보이지 않는 textarea를 순간적으로 포커스해서
+ * 브라우저의 native paste 이벤트를 가로챈다. 팝업 없음.
+ */
+function setupPasteInterceptor(): void {
+  // 항상 존재하는 숨겨진 textarea
+  const ghost = document.createElement('textarea');
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.style.cssText =
+    'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;';
+  document.body.appendChild(ghost);
 
-  const ta = overlay.querySelector('textarea') as HTMLTextAreaElement;
-  const okBtn = overlay.querySelector('.cb-ok') as HTMLButtonElement;
-  const cancelBtn = overlay.querySelector('.cb-cancel') as HTMLButtonElement;
+  // Ctrl+V keydown → ghost에 포커스 (capture phase, 이벤트 전파 유지)
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+      // 이미 다이얼로그 안이면 무시
+      if ((e.target as HTMLElement)?.closest?.('.cb-dialog')) return;
+      ghost.value = '';
+      ghost.focus();
+      // keydown은 전파시켜서 WebRTC도 받게 함
+    }
+  }, true);
 
-  const close = () => { overlay.remove(); };
-  const submit = async () => {
-    const text = ta.value;
+  // ghost에서 paste 이벤트 발생 → Kit에 전달
+  ghost.addEventListener('paste', async (e: ClipboardEvent) => {
+    const text = e.clipboardData?.getData('text/plain') || '';
     if (text) {
       await copyToKit(text);
+      console.info(`[clipboard-bridge] Pasted ${text.length} chars to Kit`);
     }
-    close();
-  };
-
-  ta.focus();
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
-    if (e.key === 'Escape') close();
+    // ghost 초기화
+    ghost.value = '';
+    ghost.blur();
   });
-  okBtn.addEventListener('click', submit);
-  cancelBtn.addEventListener('click', close);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 }
 
+/**
+ * Copy: Kit 클립보드를 가져와서 팝업으로 보여준다.
+ * (async fetch가 필요하므로 팝업 방식 유지)
+ */
 async function showCopyDialog(): Promise<void> {
   const text = await pasteFromKit();
   if (!text) return;
@@ -123,7 +117,7 @@ async function showCopyDialog(): Promise<void> {
     <div class="cb-dialog">
       <h3>Copy (Ctrl+C)</h3>
       <textarea readonly></textarea>
-      <div class="cb-hint">텍스트가 선택되었습니다. Ctrl+C로 복사하세요.</div>
+      <div class="cb-hint">Ctrl+C로 복사한 후 닫으세요</div>
       <div class="cb-btns">
         <button class="cb-cancel">Close</button>
       </div>
@@ -135,16 +129,13 @@ async function showCopyDialog(): Promise<void> {
   const cancelBtn = overlay.querySelector('.cb-cancel') as HTMLButtonElement;
   ta.value = text;
 
-  const close = () => { overlay.remove(); };
+  const close = () => overlay.remove();
 
   ta.focus();
   ta.select();
   ta.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') close();
-    // Let Ctrl+C work naturally on the selected text, then close
-    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
-      setTimeout(close, 100);
-    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') setTimeout(close, 100);
   });
   cancelBtn.addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
@@ -152,26 +143,17 @@ async function showCopyDialog(): Promise<void> {
 
 export function initClipboardBridge(): void {
   injectStyles();
+  setupPasteInterceptor();
 
+  // Ctrl+C → copy dialog (capture phase)
   document.addEventListener('keydown', (e: KeyboardEvent) => {
-    const mod = e.ctrlKey || e.metaKey;
-    if (!mod) return;
-
-    // Skip if already inside a clipboard dialog
-    if ((e.target as HTMLElement)?.closest?.('.cb-dialog')) return;
-
-    if (e.key === 'v') {
-      e.preventDefault();
-      e.stopPropagation();
-      showPasteDialog();
-    }
-
-    if (e.key === 'c') {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      if ((e.target as HTMLElement)?.closest?.('.cb-dialog')) return;
       e.preventDefault();
       e.stopPropagation();
       showCopyDialog();
     }
-  }, true);  // capture phase to intercept before WebRTC
+  }, true);
 
-  console.info('[clipboard-bridge] Initialized: clipboard dialog mode (HTTP)');
+  console.info('[clipboard-bridge] Initialized: paste=transparent, copy=dialog');
 }
