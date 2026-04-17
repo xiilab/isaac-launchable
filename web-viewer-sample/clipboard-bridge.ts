@@ -1,12 +1,11 @@
 /**
  * Clipboard Bridge: browser <-> Kit clipboard sharing via HTTP API
  *
- * Works in both HTTPS (navigator.clipboard) and HTTP (textarea fallback).
+ * HTTP 환경에서는 navigator.clipboard API가 차단되므로,
+ * code-server 방식의 팝업 다이얼로그로 클립보드를 공유한다.
  *
- * Ctrl+V (browser -> Kit): reads browser clipboard, POSTs to Kit, then lets the
- *   WebRTC keydown event trigger Kit's internal paste.
- * Ctrl+C (Kit -> browser): waits for Kit to process the copy, then GETs the Kit
- *   clipboard and writes it to the browser clipboard.
+ * Ctrl+V → 팝업에 텍스트를 붙여넣고 Enter → Kit에 전달
+ * Ctrl+C → Kit 클립보드를 가져와서 팝업에 표시 → 사용자가 복사
  */
 
 const CLIPBOARD_API = '/api/clipboard';
@@ -34,77 +33,145 @@ async function pasteFromKit(): Promise<string> {
   }
 }
 
-/** Write text to browser clipboard — works in both secure and insecure contexts. */
-async function writeToBrowserClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Secure context not available — fall through to textarea approach
+function injectStyles(): void {
+  const style = document.createElement('style');
+  style.textContent = `
+    .cb-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5); z-index: 99999;
+      display: flex; align-items: flex-start; justify-content: center;
+      padding-top: 80px;
     }
-  }
-  // Fallback: hidden textarea + execCommand('copy')
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.left = '-9999px';
-  ta.style.top = '-9999px';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.focus();
-  ta.select();
-  try {
-    document.execCommand('copy');
-  } finally {
-    document.body.removeChild(ta);
-  }
+    .cb-dialog {
+      background: #1e1e1e; border: 1px solid #555; border-radius: 8px;
+      padding: 16px 20px; width: 480px; color: #ccc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px; box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    }
+    .cb-dialog h3 { margin: 0 0 10px; font-size: 14px; color: #fff; }
+    .cb-dialog textarea {
+      width: 100%; height: 100px; background: #2d2d2d; color: #eee;
+      border: 1px solid #555; border-radius: 4px; padding: 8px;
+      font-family: monospace; font-size: 13px; resize: vertical;
+      box-sizing: border-box;
+    }
+    .cb-dialog textarea:focus { outline: none; border-color: #007acc; }
+    .cb-dialog .cb-hint {
+      margin-top: 8px; font-size: 11px; color: #888;
+    }
+    .cb-dialog .cb-btns {
+      margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px;
+    }
+    .cb-dialog button {
+      padding: 5px 14px; border-radius: 4px; border: none;
+      font-size: 12px; cursor: pointer;
+    }
+    .cb-dialog .cb-ok { background: #007acc; color: #fff; }
+    .cb-dialog .cb-ok:hover { background: #005f9e; }
+    .cb-dialog .cb-cancel { background: #3c3c3c; color: #ccc; }
+    .cb-dialog .cb-cancel:hover { background: #505050; }
+  `;
+  document.head.appendChild(style);
 }
 
-/** Read text from browser clipboard — works in both secure and insecure contexts. */
-function readFromBrowserClipboard(): Promise<string> {
-  if (navigator.clipboard?.readText) {
-    return navigator.clipboard.readText().catch(() => '');
-  }
-  // In insecure context, readText is not available.
-  // We cannot read the clipboard without user permission in HTTP.
-  // Return empty — the user can use the paste prompt approach instead.
-  return Promise.resolve('');
-}
+function showPasteDialog(): void {
+  const overlay = document.createElement('div');
+  overlay.className = 'cb-overlay';
+  overlay.innerHTML = `
+    <div class="cb-dialog">
+      <h3>Paste (Ctrl+V)</h3>
+      <textarea placeholder="여기에 텍스트를 붙여넣으세요 (Ctrl+V)"></textarea>
+      <div class="cb-hint">붙여넣기 후 Enter 또는 OK 클릭</div>
+      <div class="cb-btns">
+        <button class="cb-cancel">Cancel</button>
+        <button class="cb-ok">OK</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
 
-export function initClipboardBridge(): void {
-  // Handle paste events for HTTP fallback (browser fires 'paste' with clipboard data)
-  document.addEventListener('paste', async (e: ClipboardEvent) => {
-    const text = e.clipboardData?.getData('text/plain');
+  const ta = overlay.querySelector('textarea') as HTMLTextAreaElement;
+  const okBtn = overlay.querySelector('.cb-ok') as HTMLButtonElement;
+  const cancelBtn = overlay.querySelector('.cb-cancel') as HTMLButtonElement;
+
+  const close = () => { overlay.remove(); };
+  const submit = async () => {
+    const text = ta.value;
     if (text) {
       await copyToKit(text);
     }
-  });
+    close();
+  };
 
-  document.addEventListener('keydown', async (e: KeyboardEvent) => {
+  ta.focus();
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    if (e.key === 'Escape') close();
+  });
+  okBtn.addEventListener('click', submit);
+  cancelBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
+
+async function showCopyDialog(): Promise<void> {
+  const text = await pasteFromKit();
+  if (!text) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'cb-overlay';
+  overlay.innerHTML = `
+    <div class="cb-dialog">
+      <h3>Copy (Ctrl+C)</h3>
+      <textarea readonly></textarea>
+      <div class="cb-hint">텍스트가 선택되었습니다. Ctrl+C로 복사하세요.</div>
+      <div class="cb-btns">
+        <button class="cb-cancel">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const ta = overlay.querySelector('textarea') as HTMLTextAreaElement;
+  const cancelBtn = overlay.querySelector('.cb-cancel') as HTMLButtonElement;
+  ta.value = text;
+
+  const close = () => { overlay.remove(); };
+
+  ta.focus();
+  ta.select();
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') close();
+    // Let Ctrl+C work naturally on the selected text, then close
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      setTimeout(close, 100);
+    }
+  });
+  cancelBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
+
+export function initClipboardBridge(): void {
+  injectStyles();
+
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
     const mod = e.ctrlKey || e.metaKey;
     if (!mod) return;
 
-    // Ctrl+V: push browser clipboard into Kit before the keydown reaches WebRTC
+    // Skip if already inside a clipboard dialog
+    if ((e.target as HTMLElement)?.closest?.('.cb-dialog')) return;
+
     if (e.key === 'v') {
-      const text = await readFromBrowserClipboard();
-      if (text) {
-        await copyToKit(text);
-      }
-      // Note: if readFromBrowserClipboard returns empty in HTTP,
-      // the 'paste' event handler above will catch it instead.
+      e.preventDefault();
+      e.stopPropagation();
+      showPasteDialog();
     }
 
-    // Ctrl+C: after Kit processes the copy, pull Kit clipboard into browser
     if (e.key === 'c') {
-      setTimeout(async () => {
-        const text = await pasteFromKit();
-        if (text) {
-          await writeToBrowserClipboard(text);
-        }
-      }, 250);
+      e.preventDefault();
+      e.stopPropagation();
+      showCopyDialog();
     }
-  });
+  }, true);  // capture phase to intercept before WebRTC
 
-  console.info('[clipboard-bridge] Initialized: browser <-> Kit clipboard sharing');
+  console.info('[clipboard-bridge] Initialized: clipboard dialog mode (HTTP)');
 }
