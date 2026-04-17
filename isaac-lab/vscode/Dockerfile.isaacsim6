@@ -1,0 +1,47 @@
+# Isaac Launchable VSCode - Isaac Sim 6 Edition
+# Based on existing Dockerfile, updated base image to Isaac Sim 6
+FROM 10.61.3.124:30002/library/isaac-lab:3.0.0-beta1
+
+USER root
+
+RUN apt update && \
+    apt install -y \
+	build-essential \
+	cmake \
+	curl \
+	git
+
+RUN curl -fsSL https://code-server.dev/install.sh | sh -s -- --version=4.96.4
+
+RUN apt update && \
+	apt install -y \
+	unzip \
+	dnsutils \
+	iproute2 \
+	jq
+
+ENV WORKSPACE_DIR=/workspace
+
+COPY ./README.md ${WORKSPACE_DIR}/README.md
+COPY ./settings.json ${WORKSPACE_DIR}/.vscode/settings.json
+
+RUN code-server \
+    --install-extension ms-python.python \
+    --install-extension ms-toolsai.jupyter \
+    --force ${WORKSPACE_DIR}
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# OV Cache Directories
+RUN mkdir -p /home/isaac-sim/.cache/ov
+RUN mkdir -p /home/isaac-sim/.local/share/ov
+
+# Fix: packaging module missing in omni.isaac.core_archive/pip_prebundle
+# symlink in extscache/omni.services.pip_archive points to this path but the directory is absent
+RUN cp -r /isaac-sim/kit/python/lib/python3.12/site-packages/packaging \
+    /isaac-sim/exts/omni.isaac.core_archive/pip_prebundle/packaging
+
+ENTRYPOINT ["/bin/bash"]
+
+CMD ["/entrypoint.sh"]

@@ -31,13 +31,14 @@ spec:
       containers:
       - name: vscode
         image: 10.61.3.124:30002/library/isaac-launchable-vscode:6.0.0
+        imagePullPolicy: Always
         env:
         - name: ACCEPT_EULA
           value: "Y"
         - name: OMNI_KIT_ALLOW_ROOT
           value: "1"
         - name: ISAACSIM_STREAM_PORT
-          value: "47998"
+          value: "30998"
         - name: ISAACSIM_SIGNAL_PORT
           value: "49100"
         - name: AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
@@ -62,8 +63,8 @@ spec:
         - name: vscode
           containerPort: 8080
         - name: webrtc-media
-          containerPort: 47998
-          hostPort: 47998
+          containerPort: 30998
+          hostPort: 30998
           protocol: UDP
         - name: webrtc-signal
           containerPort: 49100
