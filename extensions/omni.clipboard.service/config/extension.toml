@@ -1,0 +1,13 @@
+[package]
+version = "1.0.0"
+title = "Clipboard Sharing Service"
+description = "HTTP API for browser <-> Kit clipboard sharing via omni.kit.clipboard"
+authors = ["xiilab"]
+keywords = ["clipboard", "webrtc", "streaming", "browser"]
+
+[dependencies]
+"omni.services.core" = {}
+"omni.kit.clipboard" = {}
+
+[[python.module]]
+name = "omni.clipboard.service"

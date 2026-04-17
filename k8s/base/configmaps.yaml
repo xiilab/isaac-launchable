@@ -67,6 +67,10 @@ data:
         location /sign_in {
           proxy_pass http://localhost:49100/sign_in;
         }
+        location /api/clipboard/ {
+          proxy_pass http://localhost:8011/clipboard/;
+          proxy_set_header Connection "";
+        }
       }
       server {
         listen 443 ssl default_server;
@@ -89,6 +93,10 @@ data:
         }
         location /sign_in {
           proxy_pass http://localhost:49100/sign_in;
+        }
+        location /api/clipboard/ {
+          proxy_pass http://localhost:8011/clipboard/;
+          proxy_set_header Connection "";
         }
       }
     }
@@ -168,5 +176,7 @@ data:
     [ -n "${ISAACSIM_STREAM_PORT}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/streamPort=${ISAACSIM_STREAM_PORT}"
     /isaac-sim/license.sh && /isaac-sim/privacy.sh && /isaac-sim/isaac-sim.streaming.sh \
         --merge-config="/isaac-sim/config/open_endpoint.toml" \
+        --ext-folder="/isaac-sim/user-exts" \
+        --enable omni.clipboard.service \
         $EXTRA_FLAGS \
         "$@"

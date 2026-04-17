@@ -22,15 +22,16 @@ RUN apt update && \
 
 ENV WORKSPACE_DIR=/workspace
 
-COPY ./README.md ${WORKSPACE_DIR}/README.md
-COPY ./settings.json ${WORKSPACE_DIR}/.vscode/settings.json
+# NOTE: build context must be repo root (docker build -f isaac-lab/vscode/Dockerfile.isaacsim6 .)
+COPY isaac-lab/vscode/README.md ${WORKSPACE_DIR}/README.md
+COPY isaac-lab/vscode/settings.json ${WORKSPACE_DIR}/.vscode/settings.json
 
 RUN code-server \
     --install-extension ms-python.python \
     --install-extension ms-toolsai.jupyter \
     --force ${WORKSPACE_DIR}
 
-COPY entrypoint.sh /entrypoint.sh
+COPY isaac-lab/vscode/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # OV Cache Directories
@@ -41,6 +42,9 @@ RUN mkdir -p /home/isaac-sim/.local/share/ov
 # symlink in extscache/omni.services.pip_archive points to this path but the directory is absent
 RUN cp -r /isaac-sim/kit/python/lib/python3.12/site-packages/packaging \
     /isaac-sim/exts/omni.isaac.core_archive/pip_prebundle/packaging
+
+# Clipboard sharing extension (browser <-> Kit via HTTP)
+COPY extensions/omni.clipboard.service /isaac-sim/user-exts/omni.clipboard.service
 
 ENTRYPOINT ["/bin/bash"]
 
