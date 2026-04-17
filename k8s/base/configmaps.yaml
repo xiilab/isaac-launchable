@@ -169,6 +169,13 @@ data:
     pkill -f 'isaacsim.exp.full.streaming.kit' 2>/dev/null || true
     sleep 1
 
+    # Symlink user extensions into Kit's extsUser search path
+    mkdir -p /isaac-sim/extsUser
+    for ext in /isaac-sim/user-exts/*/; do
+      name=$(basename "$ext")
+      ln -sfn "$ext" "/isaac-sim/extsUser/$name"
+    done
+
     EXTRA_FLAGS=""
     [ -n "${OMNI_SERVER}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/persistent/isaac/asset_root/default=${OMNI_SERVER}"
     [ -n "${ISAACSIM_HOST}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/publicIp=${ISAACSIM_HOST}"
@@ -176,7 +183,6 @@ data:
     [ -n "${ISAACSIM_STREAM_PORT}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/streamPort=${ISAACSIM_STREAM_PORT}"
     /isaac-sim/license.sh && /isaac-sim/privacy.sh && /isaac-sim/isaac-sim.streaming.sh \
         --merge-config="/isaac-sim/config/open_endpoint.toml" \
-        --ext-folder="/isaac-sim/user-exts" \
         --enable omni.clipboard.service \
         $EXTRA_FLAGS \
         "$@"
