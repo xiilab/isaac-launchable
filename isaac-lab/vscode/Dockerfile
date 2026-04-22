@@ -54,6 +54,14 @@ RUN chown -R isaac-sim /workspace /home/isaac-sim/.cache/ov /home/isaac-sim/.loc
 RUN cp /root/.bashrc /isaac-sim/.root-bashrc
 RUN echo 'source $HOME/.root-bashrc' >> /isaac-sim/.bashrc
 
+# HAMi vGPU enforcement via system-wide preload.
+# HAMi device-plugin mounts libvgpu.so at /usr/local/vgpu/libvgpu.so when the pod requests
+# nvidia.com/gpumem or nvidia.com/gpucores. Registering it in /etc/ld.so.preload survives
+# scripts (e.g. isaaclab.sh) that overwrite LD_PRELOAD, so every child process still gets
+# the CUDA/Vulkan hooks. ld.so silently skips the entry when the file is absent, so images
+# run unchanged on nodes without HAMi.
+RUN echo "/usr/local/vgpu/libvgpu.so" > /etc/ld.so.preload
+
 USER isaac-sim:isaac-sim
 
 ENTRYPOINT ["/bin/bash"]

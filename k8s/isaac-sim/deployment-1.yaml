@@ -1,29 +1,29 @@
-# Isaac Sim 6.0 + Isaac Lab 2.1.1 - VSCode 개발 환경 + Kit 스트리밍
-# 접속: http://10.61.3.125/ (nginx-ovas Ingress)
-# WebRTC: ws-node074:47998/UDP (media), ws-node074:49100/TCP (signal)
+# Isaac Sim 6.0 + Isaac Lab 2.1.1 - VSCode 개발 환경 + Kit 스트리밍 (Pod-1)
+# 접속: http://10.61.3.125/ (nginx-ovas Ingress, host: isaac-launchable-1.local)
+# WebRTC: ws-node074:30997/UDP (media), ws-node074:49101/TCP (signal)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: isaac-launchable-0
+  name: isaac-launchable-1
   namespace: isaac-launchable
   labels:
     app: isaac-launchable
-    instance: pod-0
+    instance: pod-1
 spec:
   replicas: 1
   selector:
     matchLabels:
       app: isaac-launchable
-      instance: pod-0
+      instance: pod-1
   template:
     metadata:
       labels:
         app: isaac-launchable
-        instance: pod-0
+        instance: pod-1
     spec:
       nodeSelector:
         kubernetes.io/hostname: ws-node074
-      hostname: isaac-launchable-0
+      hostname: isaac-launchable-1
       subdomain: isaac-launchable-headless
       dnsConfig:
         searches:
@@ -38,14 +38,14 @@ spec:
         - name: OMNI_KIT_ALLOW_ROOT
           value: "1"
         - name: ISAACSIM_STREAM_PORT
-          value: "30998"
+          value: "30997"
         - name: ISAACSIM_SIGNAL_PORT
-          value: "49100"
+          value: "49101"
         - name: AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
           value: hsscdns://memcached.isaac-launchable.svc.cluster.local
         - name: NVIDIA_VISIBLE_DEVICES
           value: all
-        - name: NVIDIA_GPU_CAPABILITIES
+        - name: NVIDIA_DRIVER_CAPABILITIES
           value: all
         - name: DEFAULT_WORKSPACE
           value: /config/workspace
@@ -63,22 +63,26 @@ spec:
         - name: vscode
           containerPort: 8080
         - name: webrtc-media
-          containerPort: 30998
-          hostPort: 30998
+          containerPort: 30997
+          hostPort: 30997
           protocol: UDP
         - name: webrtc-signal
-          containerPort: 49100
-          hostPort: 49100
+          containerPort: 49101
+          hostPort: 49101
           protocol: TCP
         resources:
           requests:
-            cpu: "8"
-            memory: 16Gi
+            cpu: "36"
+            memory: 170Gi
             nvidia.com/gpu: "1"
+            nvidia.com/gpumem: "10000"
+            nvidia.com/gpucores: "50"
           limits:
-            cpu: "16"
-            memory: 32Gi
+            cpu: "40"
+            memory: 180Gi
             nvidia.com/gpu: "1"
+            nvidia.com/gpumem: "10000"
+            nvidia.com/gpucores: "50"
         volumeMounts:
         - name: ov-cache
           mountPath: /root/.cache/ov
@@ -129,19 +133,19 @@ spec:
       volumes:
       - name: ov-cache
         persistentVolumeClaim:
-          claimName: isaac-ov-cache-pvc-0
+          claimName: isaac-ov-cache-pvc-1
       - name: ov-local-share
         persistentVolumeClaim:
-          claimName: isaac-ov-local-share-pvc-0
+          claimName: isaac-ov-local-share-pvc-1
       - name: workspace-data
         persistentVolumeClaim:
-          claimName: isaac-workspace-pvc-0
+          claimName: isaac-workspace-pvc-1
       - name: nginx-conf
         configMap:
-          name: nginx-config-0
+          name: nginx-config-1
       - name: runheadless-script
         configMap:
-          name: runheadless-script-0
+          name: runheadless-script-1
           defaultMode: 0755
       - name: minio-omniverse
         persistentVolumeClaim:

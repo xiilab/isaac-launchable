@@ -46,6 +46,14 @@ RUN cp -r /isaac-sim/kit/python/lib/python3.12/site-packages/packaging \
 # Clipboard sharing extension (browser <-> Kit via HTTP)
 COPY extensions/omni.clipboard.service /isaac-sim/user-exts/omni.clipboard.service
 
+# HAMi vGPU enforcement via system-wide preload.
+# HAMi device-plugin mounts libvgpu.so at /usr/local/vgpu/libvgpu.so when the pod requests
+# nvidia.com/gpumem or nvidia.com/gpucores. Registering it in /etc/ld.so.preload survives
+# scripts (e.g. isaaclab.sh) that overwrite LD_PRELOAD, so every child process still gets
+# the CUDA/Vulkan hooks. ld.so silently skips the entry when the file is absent, so images
+# run unchanged on nodes without HAMi.
+RUN echo "/usr/local/vgpu/libvgpu.so" > /etc/ld.so.preload
+
 ENTRYPOINT ["/bin/bash"]
 
 CMD ["/entrypoint.sh"]

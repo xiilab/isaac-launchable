@@ -101,6 +101,97 @@ data:
       }
     }
 ---
+# Isaac Sim (Pod-1) nginx 설정
+# - / → localhost:8080 (VSCode)
+# - /viewer/ → localhost:5173 (Web Viewer)
+# - /sign_in → localhost:49101 (WebRTC 시그널링)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config-1
+  namespace: isaac-launchable
+data:
+  nginx.conf: |
+    worker_processes auto;
+    pid /etc/nginx/.nginx.pid;
+    load_module /usr/lib/nginx/modules/ndk_http_module.so;
+    load_module /usr/lib/nginx/modules/ngx_http_lua_module.so;
+    events { worker_connections 768; }
+    http {
+      sendfile on;
+      tcp_nopush on;
+      tcp_nodelay on;
+      client_max_body_size 0;
+      keepalive_timeout 65;
+      types_hash_max_size 2048;
+      default_type application/octet-stream;
+      ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+      ssl_prefer_server_ciphers on;
+      ssl_certificate /etc/nginx/tls/cert.pem;
+      ssl_certificate_key /etc/nginx/tls/key.pem;
+      access_log /var/log/access.log;
+      error_log /var/log/error.log;
+      gzip on;
+      map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+      }
+      server {
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_redirect off;
+        location / {
+          proxy_pass http://localhost:8080/;
+        }
+        location = /viewer { return 301 /viewer/; }
+        location /viewer/ {
+          proxy_pass http://localhost:5173/viewer/;
+        }
+        location /sign_in {
+          proxy_pass http://localhost:49101/sign_in;
+        }
+        location /api/clipboard/ {
+          proxy_pass http://localhost:8011/clipboard/;
+          proxy_set_header Connection "";
+        }
+      }
+      server {
+        listen 443 ssl default_server;
+        listen [::]:443 ssl default_server;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_redirect off;
+        location / {
+          proxy_pass http://localhost:8080/;
+        }
+        location = /viewer { return 301 /viewer/; }
+        location /viewer/ {
+          proxy_pass http://localhost:5173/viewer/;
+        }
+        location /sign_in {
+          proxy_pass http://localhost:49101/sign_in;
+        }
+        location /api/clipboard/ {
+          proxy_pass http://localhost:8011/clipboard/;
+          proxy_set_header Connection "";
+        }
+      }
+    }
+---
 # USD Composer (kit-streaming) nginx 설정
 # - / → 301 /viewer/ (리다이렉트)
 # - /viewer/ → localhost:5173 (Web Viewer)
@@ -166,6 +257,42 @@ data:
   runheadless.sh: |
     #! /bin/sh
     # Kill any orphaned Kit streaming process holding TCP 49100 before starting
+    pkill -f 'isaacsim.exp.full.streaming.kit' 2>/dev/null || true
+    sleep 1
+
+    # Symlink user extensions into Kit's extsUser search path
+    mkdir -p /isaac-sim/extsUser
+    for ext in /isaac-sim/user-exts/*/; do
+      name=$(basename "$ext")
+      ln -sfn "$ext" "/isaac-sim/extsUser/$name"
+    done
+
+    # Hide tutorial extension so Example menus don't appear in the UI
+    tut=/isaac-sim/exts/isaacsim.robot_motion.motion_generation.tutorials
+    [ -d "$tut" ] && mv "$tut" "${tut}.disabled" 2>/dev/null || true
+
+    EXTRA_FLAGS=""
+    [ -n "${OMNI_SERVER}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/persistent/isaac/asset_root/default=${OMNI_SERVER}"
+    [ -n "${ISAACSIM_HOST}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/publicIp=${ISAACSIM_HOST}"
+    [ -n "${ISAACSIM_SIGNAL_PORT}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/signalPort=${ISAACSIM_SIGNAL_PORT}"
+    [ -n "${ISAACSIM_STREAM_PORT}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/streamPort=${ISAACSIM_STREAM_PORT}"
+    /isaac-sim/license.sh && /isaac-sim/privacy.sh && /isaac-sim/isaac-sim.streaming.sh \
+        --merge-config="/isaac-sim/config/open_endpoint.toml" \
+        --enable omni.clipboard.service \
+        $EXTRA_FLAGS \
+        "$@"
+---
+# Isaac Sim runheadless.sh 오버라이드 (Pod-1)
+# 내용은 pod-0와 동일 — 포트는 컨테이너 env (ISAACSIM_SIGNAL_PORT/STREAM_PORT)로 주입되므로 스크립트 재사용 가능
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runheadless-script-1
+  namespace: isaac-launchable
+data:
+  runheadless.sh: |
+    #! /bin/sh
+    # Kill any orphaned Kit streaming process before starting
     pkill -f 'isaacsim.exp.full.streaming.kit' 2>/dev/null || true
     sleep 1
 

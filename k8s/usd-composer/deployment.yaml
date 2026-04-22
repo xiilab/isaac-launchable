@@ -57,7 +57,7 @@ spec:
           value: "Y"
         - name: NVIDIA_VISIBLE_DEVICES
           value: all
-        - name: NVIDIA_GPU_CAPABILITIES
+        - name: NVIDIA_DRIVER_CAPABILITIES
           value: all
         - name: NVDA_KIT_ARGS
           value: >-

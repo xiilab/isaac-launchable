@@ -1,0 +1,28 @@
+# Isaac Sim Ingress (nginx-ovas, MetalLB 10.61.3.125) - Pod-1
+# host: isaac-launchable-1.local
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: isaac-launchable-ingress-1
+  namespace: isaac-launchable
+  annotations:
+    nginx.org/proxy-buffering: "false"
+    nginx.org/proxy-connect-timeout: 3600s
+    nginx.org/proxy-read-timeout: 3600s
+    nginx.org/proxy-send-timeout: 3600s
+    nginx.org/server-snippets: |
+      server_name ~^.*$;
+    nginx.org/websocket-services: isaac-launchable-svc-1
+spec:
+  ingressClassName: nginx-ovas
+  rules:
+  - host: isaac-launchable-1.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: isaac-launchable-svc-1
+            port:
+              number: 80

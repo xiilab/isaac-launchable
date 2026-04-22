@@ -43,6 +43,48 @@ spec:
       storage: 50Gi
   storageClassName: astrago-nfs-csi
 ---
+# Isaac Sim 셰이더 캐시 (Pod-1, /root/.cache/ov)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: isaac-ov-cache-pvc-1
+  namespace: isaac-launchable
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: astrago-nfs-csi
+---
+# Isaac Sim 로컬 쉐어 (Pod-1, /root/.local/share/ov)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: isaac-ov-local-share-pvc-1
+  namespace: isaac-launchable
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: astrago-nfs-csi
+---
+# Isaac Sim 워크스페이스 (Pod-1, /workspace/data)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: isaac-workspace-pvc-1
+  namespace: isaac-launchable
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: astrago-nfs-csi
+---
 # USD Composer 셰이더 캐시 (/home/ubuntu/.cache/ov)
 apiVersion: v1
 kind: PersistentVolumeClaim
