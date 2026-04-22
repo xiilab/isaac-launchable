@@ -56,11 +56,17 @@ main() {
   # Media server uses IP address (can be overridden via MEDIA_SERVER env var)
   MEDIA_SERVER=${MEDIA_SERVER:-${IP}}
   
+  # TURN server URL (internal WebRTC relay). Override via TURN_URL env if needed.
+  TURN_URL=${TURN_URL:-turn:10.61.3.74:3478}
+  TURN_USER=${TURN_USER:-isaac}
+  TURN_PASS=${TURN_PASS:-isaac}
+
   echo "Configuring stream settings:"
   echo "  SIGNALING_SERVER: ${SIGNALING_SERVER}"
   echo "  SIGNALING_PORT: ${SIGNALING_PORT}"
   echo "  MEDIA_SERVER: ${MEDIA_SERVER}"
   echo "  FORCE_WSS: ${FORCE_WSS}"
+  echo "  TURN_URL: ${TURN_URL}"
 
   # Patch the stream config with actual values (search for keys, not placeholders)
   # This works on both first run and restarts where values may have changed
@@ -68,6 +74,30 @@ main() {
   sed -i "s/signalingPort: [^,]*/signalingPort: ${SIGNALING_PORT}/" /app/web-viewer-sample/src/main.ts
   sed -i "s/mediaServer: '[^']*'/mediaServer: '${MEDIA_SERVER}'/" /app/web-viewer-sample/src/main.ts
   sed -i "s/forceWSS: [^,]*/forceWSS: ${FORCE_WSS}/" /app/web-viewer-sample/src/main.ts
+
+  # RTCPeerConnection monkey-patch으로 iceServers(TURN) 강제 주입.
+  # @nvidia/omniverse-webrtc-streaming-library 의 DirectConfig 는 iceServers 미지원이라
+  # 라이브러리 내부에서 호출하는 new RTCPeerConnection(config) 를 가로채 TURN relay 강제.
+  # main.ts 최상단에 멱등 삽입.
+  if ! grep -q "__ISAAC_TURN_PATCH__" /app/web-viewer-sample/src/main.ts; then
+    cat > /tmp/turn-patch.ts <<EOF
+// __ISAAC_TURN_PATCH__ — RTCPeerConnection monkey-patch for TURN relay
+const _OrigRTCPC = (window as any).RTCPeerConnection;
+(window as any).RTCPeerConnection = function (cfg: any, ...rest: any[]) {
+  cfg = cfg || {};
+  cfg.iceServers = [
+    { urls: ['${TURN_URL}?transport=udp', '${TURN_URL}?transport=tcp'],
+      username: '${TURN_USER}', credential: '${TURN_PASS}' }
+  ];
+  cfg.iceTransportPolicy = 'relay';
+  return new _OrigRTCPC(cfg, ...rest);
+};
+(window as any).RTCPeerConnection.prototype = _OrigRTCPC.prototype;
+EOF
+    # main.ts 맨 앞에 prepend (clipboard-bridge import 라인 이후에 넣기 위해 sed 사용)
+    cat /tmp/turn-patch.ts /app/web-viewer-sample/src/main.ts > /tmp/main-new.ts
+    mv /tmp/main-new.ts /app/web-viewer-sample/src/main.ts
+  fi
 
   exec npm run dev -- --host 0.0.0.0
 }
