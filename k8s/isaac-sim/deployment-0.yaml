@@ -95,6 +95,10 @@ spec:
           subPath: runheadless.sh
         - name: minio-omniverse
           mountPath: /mnt/minio
+        - name: kit-turn
+          mountPath: /etc/kit-turn.toml
+          subPath: turn.toml
+          readOnly: true
       - name: nginx
         image: 10.61.3.124:30002/library/isaac-launchable-nginx:latest
         ports:
@@ -127,6 +131,12 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: MEDIA_PORT
+          value: "30998"
+        - name: POD_INDEX
+          value: "0"
+        - name: SIGNAL_URL
+          value: /sign_in
         ports:
         - name: viewer
           containerPort: 5173
@@ -150,3 +160,6 @@ spec:
       - name: minio-omniverse
         persistentVolumeClaim:
           claimName: minio-omniverse-pvc
+      - name: kit-turn
+        configMap:
+          name: kit-turn-override

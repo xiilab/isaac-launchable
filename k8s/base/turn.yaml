@@ -1,0 +1,68 @@
+# coturn TURN 서버 — Isaac Sim WebRTC 미디어 relay
+# hostNetwork 모드로 노드 IP(ws-node074 = 10.61.3.74)에 직접 바인딩
+# 한 노드에 여러 isaac-launchable 파드 동시 운영을 지원 (각 세션별 relay 포트 분리)
+# 인증은 공개된 isaac:isaac — 내부망 전제
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coturn-config
+  namespace: isaac-launchable
+data:
+  turnserver.conf: |
+    listening-port=3478
+    fingerprint
+    lt-cred-mech
+    user=isaac:isaac
+    realm=isaac-launchable.local
+    min-port=49160
+    max-port=49400
+    external-ip=10.61.3.74
+    listening-ip=0.0.0.0
+    relay-ip=0.0.0.0
+    no-multicast-peers
+    no-cli
+    no-tls
+    no-dtls
+    log-file=stdout
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coturn
+  namespace: isaac-launchable
+  labels:
+    app: coturn
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coturn
+  template:
+    metadata:
+      labels:
+        app: coturn
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: ws-node074
+      containers:
+      - name: coturn
+        image: coturn/coturn:4.6.2
+        args: ["-c", "/etc/coturn/turnserver.conf"]
+        volumeMounts:
+        - name: cfg
+          mountPath: /etc/coturn
+          readOnly: true
+        resources:
+          requests:
+            cpu: "500m"
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+      volumes:
+      - name: cfg
+        configMap:
+          name: coturn-config

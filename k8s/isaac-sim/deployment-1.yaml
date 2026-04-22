@@ -1,6 +1,7 @@
 # Isaac Sim 6.0 + Isaac Lab 2.1.1 - VSCode 개발 환경 + Kit 스트리밍 (Pod-1)
 # 접속: http://10.61.3.125/ (nginx-ovas Ingress, host: isaac-launchable-1.local)
-# WebRTC: ws-node074:30997/UDP (media), ws-node074:49101/TCP (signal)
+# WebRTC: ws-node074:30999/UDP (media, NodePort), Service isaac-launchable-1-lb:49100/TCP (signal)
+# 주의: pod-1은 hostPort 미사용 (Service로만 노출) — pod-0의 signal hostPort 49100과 충돌 회피
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,9 +39,9 @@ spec:
         - name: OMNI_KIT_ALLOW_ROOT
           value: "1"
         - name: ISAACSIM_STREAM_PORT
-          value: "30997"
+          value: "30999"
         - name: ISAACSIM_SIGNAL_PORT
-          value: "49101"
+          value: "49100"
         - name: AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
           value: hsscdns://memcached.isaac-launchable.svc.cluster.local
         - name: NVIDIA_VISIBLE_DEVICES
@@ -63,12 +64,10 @@ spec:
         - name: vscode
           containerPort: 8080
         - name: webrtc-media
-          containerPort: 30997
-          hostPort: 30997
+          containerPort: 30999
           protocol: UDP
         - name: webrtc-signal
-          containerPort: 49101
-          hostPort: 49101
+          containerPort: 49100
           protocol: TCP
         resources:
           requests:
@@ -95,6 +94,10 @@ spec:
           subPath: runheadless.sh
         - name: minio-omniverse
           mountPath: /mnt/minio
+        - name: kit-turn
+          mountPath: /etc/kit-turn.toml
+          subPath: turn.toml
+          readOnly: true
       - name: nginx
         image: 10.61.3.124:30002/library/isaac-launchable-nginx:latest
         ports:
@@ -127,6 +130,12 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: MEDIA_PORT
+          value: "30999"
+        - name: POD_INDEX
+          value: "1"
+        - name: SIGNAL_URL
+          value: /sign_in
         ports:
         - name: viewer
           containerPort: 5173
@@ -150,3 +159,6 @@ spec:
       - name: minio-omniverse
         persistentVolumeClaim:
           claimName: minio-omniverse-pvc
+      - name: kit-turn
+        configMap:
+          name: kit-turn-override

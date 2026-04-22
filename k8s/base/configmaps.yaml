@@ -10,6 +10,19 @@ data:
   FORCE_WSS: "false"
   SIGNALING_PORT: "80"
 ---
+# Kit TURN 오버라이드 — 모든 isaac-launchable 파드 공통
+# WebRTC 미디어를 coturn(10.61.3.74:3478)으로 relay 강제 → pod ephemeral UDP 외부 노출 불필요
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kit-turn-override
+  namespace: isaac-launchable
+data:
+  turn.toml: |
+    [settings.exts."omni.kit.livestream.webrtc"]
+    iceServers = "[{\"urls\":[\"turn:10.61.3.74:3478?transport=udp\",\"turn:10.61.3.74:3478?transport=tcp\"],\"username\":\"isaac\",\"credential\":\"isaac\"}]"
+    iceTransportPolicy = "relay"
+---
 # Isaac Sim (Pod-0) nginx 설정
 # - / → localhost:8080 (VSCode)
 # - /viewer/ → localhost:5173 (Web Viewer)
@@ -104,7 +117,7 @@ data:
 # Isaac Sim (Pod-1) nginx 설정
 # - / → localhost:8080 (VSCode)
 # - /viewer/ → localhost:5173 (Web Viewer)
-# - /sign_in → localhost:49101 (WebRTC 시그널링)
+# - /sign_in → localhost:49100 (WebRTC 시그널링)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -156,7 +169,7 @@ data:
           proxy_pass http://localhost:5173/viewer/;
         }
         location /sign_in {
-          proxy_pass http://localhost:49101/sign_in;
+          proxy_pass http://localhost:49100/sign_in;
         }
         location /api/clipboard/ {
           proxy_pass http://localhost:8011/clipboard/;
@@ -183,7 +196,7 @@ data:
           proxy_pass http://localhost:5173/viewer/;
         }
         location /sign_in {
-          proxy_pass http://localhost:49101/sign_in;
+          proxy_pass http://localhost:49100/sign_in;
         }
         location /api/clipboard/ {
           proxy_pass http://localhost:8011/clipboard/;
@@ -276,9 +289,14 @@ data:
     [ -n "${ISAACSIM_HOST}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/publicIp=${ISAACSIM_HOST}"
     [ -n "${ISAACSIM_SIGNAL_PORT}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/signalPort=${ISAACSIM_SIGNAL_PORT}"
     [ -n "${ISAACSIM_STREAM_PORT}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/streamPort=${ISAACSIM_STREAM_PORT}"
+    # TURN override 자동 병합 (파일 존재 시에만)
+    TURN_FLAG=""
+    [ -f /etc/kit-turn.toml ] && TURN_FLAG="--merge-config=/etc/kit-turn.toml"
+
     /isaac-sim/license.sh && /isaac-sim/privacy.sh && /isaac-sim/isaac-sim.streaming.sh \
         --merge-config="/isaac-sim/config/open_endpoint.toml" \
         --enable omni.clipboard.service \
+        $TURN_FLAG \
         $EXTRA_FLAGS \
         "$@"
 ---
@@ -312,8 +330,13 @@ data:
     [ -n "${ISAACSIM_HOST}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/publicIp=${ISAACSIM_HOST}"
     [ -n "${ISAACSIM_SIGNAL_PORT}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/signalPort=${ISAACSIM_SIGNAL_PORT}"
     [ -n "${ISAACSIM_STREAM_PORT}" ] && EXTRA_FLAGS="${EXTRA_FLAGS} --/exts/omni.kit.livestream.app/primaryStream/streamPort=${ISAACSIM_STREAM_PORT}"
+    # TURN override 자동 병합 (파일 존재 시에만)
+    TURN_FLAG=""
+    [ -f /etc/kit-turn.toml ] && TURN_FLAG="--merge-config=/etc/kit-turn.toml"
+
     /isaac-sim/license.sh && /isaac-sim/privacy.sh && /isaac-sim/isaac-sim.streaming.sh \
         --merge-config="/isaac-sim/config/open_endpoint.toml" \
         --enable omni.clipboard.service \
+        $TURN_FLAG \
         $EXTRA_FLAGS \
         "$@"
