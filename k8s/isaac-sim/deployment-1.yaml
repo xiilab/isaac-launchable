@@ -44,8 +44,8 @@ spec:
           value: "49100"
         - name: AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
           value: hsscdns://memcached.isaac-launchable.svc.cluster.local
-        - name: NVIDIA_VISIBLE_DEVICES
-          value: all
+        # NVIDIA_VISIBLE_DEVICES 는 HAMi device-plugin 이 할당 GPU UUID 로 자동 주입.
+        # "all" 로 덮어쓰면 HAMi 가시성 통제가 무력화되어 미할당 GPU 까지 노출 + 쿼터 우회됨.
         - name: NVIDIA_DRIVER_CAPABILITIES
           value: all
         - name: DEFAULT_WORKSPACE
