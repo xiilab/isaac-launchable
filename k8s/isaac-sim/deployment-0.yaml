@@ -41,6 +41,12 @@ spec:
           value: "30998"
         - name: ISAACSIM_SIGNAL_PORT
           value: "49100"
+        # runheadless.sh 가 --/exts/omni.kit.livestream.app/primaryStream/publicIp 로 주입.
+        # 비어 있으면 NVST 가 pod internal IP (10.244.x.x) 을 candidate 로 advertise → 외부 도달 불가.
+        - name: ISAACSIM_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
         - name: AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
           value: hsscdns://memcached.isaac-launchable.svc.cluster.local
         # NVIDIA_VISIBLE_DEVICES 는 HAMi device-plugin 이 할당 GPU UUID 로 자동 주입.
