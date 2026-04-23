@@ -284,7 +284,27 @@ ilplay Isaac-Ant-v0 logs/rsl_rl/ant/2026-04-23_12-01-17/model_999.pt
 
 ---
 
-## 9. 참고
+## 9. 2026-04-24 추가: 이 설계는 실험적으로 기각됨
+
+아래 실험들로 본 설계의 **P1 가정**("Kit이 떠있는 상태에서 `gym.make`가 기존 `SimulationContext`를 재사용") 이 **실질적으로 성립하지 않음**을 확인:
+
+| 변형 | 결과 |
+|---|---|
+| Kit 직접 기동(streaming.kit) + `--exec probe.py` + PYTHONPATH import | `env.reset`에서 warp kernel device mismatch (cpu vs cuda:0) |
+| 위 + isaaclab_* 를 Kit ext lifecycle로 load | 동일 에러 |
+| 위 + AppLauncher의 Carb settings 수동 주입 | 동일 에러 |
+| streaming.kit + `AppLauncher._create_app` monkey-patch (main thread 실행) | `gym.make` deadlock (Kit event loop 경합) |
+| 위 + play 로직을 Python thread로 isolation + signal.signal no-op | `gym.make` 5분+ stall |
+
+**근본 원인**: Isaac Sim `SimulationApp` (`/isaac-sim/exts/isaacsim.simulation_app/`) 는 단순 Kit wrapper가 아니라 `AppFramework`로 **Kit을 background thread로 분리하고 Python을 main thread로 유지**하는 복잡한 threading/event-pump 모델을 구현. 이를 우회/재현하지 않고는 Kit ↔ Python 병행이 불가. 재현 규모는 수천 줄 수준으로 본 설계 범위 초과.
+
+**대안 경로 평가**:
+- `isaacsim.exp.full` dependency를 추가한 custom kit은 **업스트림 #5362 deadlock** 경로와 동일 증상 (10~12분 native 단 stall). 이것도 실험적 기각.
+- 결국 "play.py를 실시간 viewport로 보기"는 **Isaac Lab 업스트림 #5364 fix에 의존**. 본 설계로 달성 불가.
+
+**다시 꺼낼 조건**: Isaac Sim upstream이 SimulationApp-less embedded Python 진입점을 제공하거나, Isaac Lab이 AppLauncher 없이 동작하는 env 팩토리를 제공하는 경우.
+
+## 10. 참고
 
 - 메모리: `project_isaac_sim_webrtc_publicip.md`, `project_isaac_lab_livestream_status.md`
 - `isaacsim.exp.full.streaming.kit`: `/isaac-sim/apps/` (파드 내부)
