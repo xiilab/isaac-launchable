@@ -19,13 +19,6 @@ spec:
   - host: isaac-launchable-0.local
     http:
       paths:
-      - path: /pod-0/signaling
-        pathType: Prefix
-        backend:
-          service:
-            name: isaac-launchable-svc-0
-            port:
-              number: 9000
       - path: /
         pathType: Prefix
         backend:
