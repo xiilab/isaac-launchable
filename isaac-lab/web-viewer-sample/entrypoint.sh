@@ -27,6 +27,13 @@ else
 fi
 SIGNALING_PORT=${SIGNALING_PORT:-${DEFAULT_SIGNALING_PORT}}
 
+# WebRTC Gateway routing: signaling path (default '/sign_in' preserves upstream behavior)
+# and coturn TURN credentials for forced-relay peer connections on the browser side.
+SIGNAL_PATH=${SIGNAL_PATH:-/sign_in}
+TURN_URI=${TURN_URI:-}
+TURN_USERNAME=${TURN_USERNAME:-}
+TURN_CREDENTIAL=${TURN_CREDENTIAL:-}
+
 get_ip() {
   case ${ENV} in
     instance)
@@ -58,9 +65,12 @@ main() {
   
   echo "Configuring stream settings:"
   echo "  SIGNALING_SERVER: ${SIGNALING_SERVER}"
-  echo "  SIGNALING_PORT: ${SIGNALING_PORT}"
-  echo "  MEDIA_SERVER: ${MEDIA_SERVER}"
-  echo "  FORCE_WSS: ${FORCE_WSS}"
+  echo "  SIGNALING_PORT:   ${SIGNALING_PORT}"
+  echo "  MEDIA_SERVER:     ${MEDIA_SERVER}"
+  echo "  FORCE_WSS:        ${FORCE_WSS}"
+  echo "  SIGNAL_PATH:      ${SIGNAL_PATH}"
+  echo "  TURN_URI:         ${TURN_URI}"
+  echo "  TURN_USERNAME:    ${TURN_USERNAME}"
 
   # Patch the stream config with actual values (search for keys, not placeholders)
   # This works on both first run and restarts where values may have changed
@@ -68,6 +78,53 @@ main() {
   sed -i "s/signalingPort: [^,]*/signalingPort: ${SIGNALING_PORT}/" /app/web-viewer-sample/src/main.ts
   sed -i "s/mediaServer: '[^']*'/mediaServer: '${MEDIA_SERVER}'/" /app/web-viewer-sample/src/main.ts
   sed -i "s/forceWSS: [^,]*/forceWSS: ${FORCE_WSS}/" /app/web-viewer-sample/src/main.ts
+
+  # Inject / update signalingPath on DirectConfig so the browser WebSocket hits
+  # the gateway at e.g. '/pod-0/signaling' instead of Kit's default '/sign_in'.
+  # DirectConfig in @nvidia/omniverse-webrtc-streaming-library declares:
+  #   /** Path for resolving custom NVCF functions. */
+  #   signalingPath?: string;
+  # so this is a library-supported field.
+  if grep -q "signalingPath:" /app/web-viewer-sample/src/main.ts; then
+    sed -i "s|signalingPath: '[^']*'|signalingPath: '${SIGNAL_PATH}'|" /app/web-viewer-sample/src/main.ts
+  else
+    # Inject a signalingPath line directly after signalingPort on the same indent level.
+    sed -i "s|signalingPort: ${SIGNALING_PORT},|signalingPort: ${SIGNALING_PORT},\n            signalingPath: '${SIGNAL_PATH}',|" \
+      /app/web-viewer-sample/src/main.ts
+  fi
+
+  # Inject an RTCPeerConnection override at the top of main.ts so the browser
+  # peer uses the coturn relay. DirectConfig does NOT expose iceServers /
+  # iceTransportPolicy (verified against
+  # @nvidia/omniverse-webrtc-streaming-library.d.ts in v1.x), so we can't pass
+  # them via streamConfig. Overriding window.RTCPeerConnection before the
+  # library imports is the supported hook to force
+  # iceTransportPolicy='relay' with our TURN credentials on whatever
+  # PeerConnection the library constructs internally.
+  if [ -n "${TURN_URI}" ] && ! grep -q "isaac-launchable-turn-override" /app/web-viewer-sample/src/main.ts; then
+    cat > /tmp/pc-override.snippet <<EOF
+// isaac-launchable-turn-override: injected by entrypoint for coturn relay
+;(function() {
+  const OrigPC = window.RTCPeerConnection;
+  const injected = {
+    iceServers: [
+      { urls: ['${TURN_URI}?transport=udp', '${TURN_URI}?transport=tcp'],
+        username: '${TURN_USERNAME}', credential: '${TURN_CREDENTIAL}' }
+    ],
+    iceTransportPolicy: 'relay',
+  };
+  const Patched: any = function(cfg: any) {
+    const merged = Object.assign({}, cfg || {}, injected);
+    return new OrigPC(merged);
+  };
+  Patched.prototype = OrigPC.prototype;
+  (window as any).RTCPeerConnection = Patched;
+})();
+EOF
+    cat /tmp/pc-override.snippet /app/web-viewer-sample/src/main.ts > /tmp/main.ts.patched
+    mv /tmp/main.ts.patched /app/web-viewer-sample/src/main.ts
+    rm -f /tmp/pc-override.snippet
+  fi
 
   exec npm run dev -- --host 0.0.0.0
 }
