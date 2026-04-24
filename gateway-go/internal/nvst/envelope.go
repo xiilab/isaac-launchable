@@ -21,9 +21,12 @@ const (
 )
 
 // Message is a parsed NVST signaling envelope. The raw map preserves every
-// field so unknown types can be re-encoded without loss.
+// field so unknown types can be re-encoded without loss. `encoded` is
+// set by builders that need precise byte-level output (specific key
+// ordering for the NVST browser library).
 type Message struct {
-	raw map[string]any
+	raw     map[string]any
+	encoded []byte
 }
 
 // Parse decodes a single WS frame into a Message.
@@ -115,8 +118,13 @@ func (m *Message) SdpMLineIndex() int {
 	}
 }
 
-// Encode serializes the envelope back to JSON bytes.
+// Encode serializes the envelope back to JSON bytes. If the Message
+// was built with a preferred byte layout (NewPeerMsgTo{Kit,Browser}),
+// that exact payload is returned; otherwise the raw map is re-marshalled.
 func (m *Message) Encode() ([]byte, error) {
+	if m.encoded != nil {
+		return m.encoded, nil
+	}
 	return json.Marshal(m.raw)
 }
 

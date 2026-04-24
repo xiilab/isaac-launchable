@@ -137,13 +137,42 @@ func (m *Message) PeerInfo() (map[string]any, bool) {
 	return pi, ok
 }
 
+// kitFrame is the wire format for client→server envelopes. Struct
+// ordering preserves {from, to, msg} key sequence in JSON output.
+type kitFrame struct {
+	PeerMsg peerMsgEnvelope `json:"peer_msg"`
+}
+
 // NewPeerMsgToKit builds a client→server envelope:
 //
 //	{"peer_msg":{"from":N,"to":1,"msg":"<JSON>"}}
+//
+// Uses explicit struct ordering (from, to, msg) mirroring what the
+// NVIDIA library emits on the wire.
 func NewPeerMsgToKit(from, to int, inner *PeerMsgInner) (*Message, error) {
 	innerBytes, err := json.Marshal(inner)
 	if err != nil {
 		return nil, fmt.Errorf("nvst: marshal inner: %w", err)
+	}
+	if browserLibKeyOrder {
+		frame := kitFrame{
+			PeerMsg: peerMsgEnvelope{
+				From: from,
+				To:   to,
+				Msg:  string(innerBytes),
+			},
+		}
+		buf, err := json.Marshal(frame)
+		if err != nil {
+			return nil, fmt.Errorf("nvst: marshal envelope: %w", err)
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(buf, &raw); err != nil {
+			return nil, err
+		}
+		m := &Message{raw: raw}
+		m.encoded = buf
+		return m, nil
 	}
 	return &Message{raw: map[string]any{
 		"peer_msg": map[string]any{
@@ -159,13 +188,55 @@ func NewAck(ackid int) *Message {
 	return &Message{raw: map[string]any{"ack": ackid}}
 }
 
+// browserLibKeyOrder returns true to encode peer_msg with Go-struct
+// field order (from, to, msg) rather than the alphabetical map-sort
+// order. The browser-side NVST library appears to be picky about this.
+const browserLibKeyOrder = true
+
+// peerMsgEnvelope mirrors the wire format used by the NVIDIA streaming
+// library. Field order matters: `from`, `to` (optional), then `msg`.
+type peerMsgEnvelope struct {
+	From int    `json:"from"`
+	To   int    `json:"to,omitempty"`
+	Msg  string `json:"msg"`
+}
+
+type browserFrame struct {
+	Ackid   int             `json:"ackid,omitempty"`
+	PeerMsg peerMsgEnvelope `json:"peer_msg"`
+}
+
 // NewPeerMsgToBrowser builds a server→client envelope with ackid:
 //
 //	{"ackid":N,"peer_msg":{"from":1,"msg":"<JSON>"}}
+//
+// Uses explicit struct ordering so the JSON fields appear as the
+// NVST browser library expects (alphabetical map sort produces
+// {from, msg, to} which some library versions reject).
 func NewPeerMsgToBrowser(ackid, from int, inner *PeerMsgInner) (*Message, error) {
 	innerBytes, err := json.Marshal(inner)
 	if err != nil {
 		return nil, fmt.Errorf("nvst: marshal inner: %w", err)
+	}
+	if browserLibKeyOrder {
+		frame := browserFrame{
+			Ackid: ackid,
+			PeerMsg: peerMsgEnvelope{
+				From: from,
+				Msg:  string(innerBytes),
+			},
+		}
+		buf, err := json.Marshal(frame)
+		if err != nil {
+			return nil, fmt.Errorf("nvst: marshal envelope: %w", err)
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(buf, &raw); err != nil {
+			return nil, err
+		}
+		m := &Message{raw: raw}
+		m.encoded = buf
+		return m, nil
 	}
 	return &Message{raw: map[string]any{
 		"ackid": ackid,

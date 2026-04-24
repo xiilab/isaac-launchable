@@ -58,6 +58,12 @@ type state struct {
 	ackCounter    int32 // monotonic counter for ackid on gateway-originated server→client frames.
 }
 
+// ackBase is the starting value for gateway-originated ackids. Kit
+// uses low numbers (1, 2, 3…) for its own frames. Starting well above
+// those avoids collision so the browser library doesn't treat our new
+// ackid:1 as a duplicate of Kit's peer_info:1.
+const ackBase = int32(10000)
+
 // Factory returns a proxy.SessionFactory that builds a full SFU session
 // per browser connection.
 func Factory(cfg Config) proxy.SessionFactory {
@@ -95,7 +101,7 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	st := &state{kitPeerID: 1} // Kit default id = 1, overwritten once observed
+	st := &state{kitPeerID: 1, ackCounter: ackBase} // Kit default id=1; ackid starts high to avoid collision with Kit's sequence
 
 	// Upstream trickle: forward each locally-gathered candidate to Kit
 	// via client→server peer_msg. Kit advertises ice-options:trickle so
