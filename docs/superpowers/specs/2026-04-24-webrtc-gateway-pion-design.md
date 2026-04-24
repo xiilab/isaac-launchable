@@ -322,3 +322,83 @@ LOG_LEVEL        = info
 - Pion WebRTC: https://github.com/pion/webrtc
 - coturn (기존): `k8s/base/turn.yaml`, `k8s/base/configmaps.yaml` (coturn-config)
 - 기존 signaling 관찰: `/sign_in?peer_id=peer-NNNN&version=2&reconnect=1` WebSocket URL, JSON message bodies
+
+---
+
+## 11. 2026-04-24 저녁 재결정 — **C 경로 (Pion SFU with SDP munging) 채택**
+
+### 11.1 왜 다시 Pion 인가
+
+Headless Chromium 경로 (§섹션 참조) 는 commit `bba9a35`–`9b960b5` 에서 구현했으나 `566a863` 에서 simple-proxy 로 downscale 됨. 현재 `gateway/main.js` 는 signaling pass-through 만 수행 — media 는 Kit ↔ 브라우저 직접 peer 이고, 브라우저의 TURN relay candidate 를 Kit 이 받아들이지 못해 `StreamerNoNominatedCandidatePairs` 로 실패.
+
+근본 문제: **Kit (NvSt) 은 iceServers 를 무시하므로 Kit 쪽에서 TURN relay 를 쓸 수 없음**. 따라서 Gateway 가 **실제 WebRTC peer 로 개입**하여 Kit ↔ Gateway 는 pod 내부 loopback 으로, Gateway ↔ 브라우저는 TURN relay 로 분리해야 함.
+
+### 11.2 구현 방식: SDP munging proxy (NVST opacity 우회)
+
+**핵심 통찰**: NVST signaling 의 프로토콜 *envelope* 은 불투명하지만, envelope 안의 offer/answer payload 는 **표준 SDP 문자열**. Gateway 는 envelope 을 그대로 pass-through 하되 offer/answer 메시지만 intercept 해서 SDP 본문을 rewrite 함.
+
+**흐름**:
+
+```
+브라우저 ──[NVST envelope: offer payload X]── Gateway ──[pass-through]── Kit
+Kit ──[NVST envelope: offer payload X]── Gateway
+                                              │
+                                              ├── Pion upstream peer.SetRemoteDescription(X)
+                                              │   → answer Y (Gateway 의 loopback candidates)
+                                              ├── Pion upstream peer.CreateAnswer() → Y
+                                              │
+                                              └── [NVST envelope: answer payload Y] ── Kit
+                                                  (Kit 은 Y 의 candidate 로 loopback UDP peer 확립)
+
+Gateway ── Pion downstream peer.CreateOffer() ──→ offer Z (Gateway 의 TURN relay candidates)
+Gateway ──[NVST envelope: offer payload Z]── 브라우저
+브라우저 ──[NVST envelope: answer payload W]── Gateway
+                                               → downstream peer.SetRemoteDescription(W)
+
+upstream peer.OnTrack(rtpTrack) → track-forward → downstream peer.LocalStaticRTP.WriteRTP
+```
+
+**핵심 구성요소**:
+1. **NVST envelope parser**: `{"type": "...", "sdp": "...", "candidate": "...", ...}` JSON 파싱. Type 필드 기반 분기.
+2. **SDP munger**: `pion/sdp/v3` 이용해 incoming SDP 를 parse → ICE candidates / fingerprint / ufrag-pwd 만 Gateway 것으로 substitute.
+3. **Dual PeerConnection manager**: upstream (Kit 방향) + downstream (browser 방향) 를 하나의 session 으로 묶어 관리.
+4. **Track forwarder**: upstream.OnTrack → downstream.AddTrack(TrackLocalStaticRTP). RTP 패킷 pass-through (re-encrypt SRTP only).
+
+**NVST 프로토콜 중 Gateway 가 "이해해야" 하는 것**:
+- message type 분류 (offer / answer / candidate / 기타)
+- offer/answer 메시지의 SDP 필드 위치
+- candidate 메시지의 candidate 문자열 + sdpMid / sdpMLineIndex 필드 위치
+
+이 외 NVST 고유 메시지 (config, peerId registration 등) 는 **완전 pass-through** — Gateway 가 내용을 해석하지 않음. 따라서 NVST 프로토콜 리버스 엔지니어링 부담이 크게 축소.
+
+### 11.3 구현 언어: Go + Pion (vs Node.js 유지)
+
+- **Go + Pion (선택)**: 표준 WebRTC 스택, SRTP/DTLS native, 작은 정적 바이너리 이미지 (~30 MB), 경량 컨테이너
+- Node.js + `@roamhq/wrtc` (대안): 기존 Node.js 유지 가능하지만 native binary deps 로 이미지 무겁고 (~150 MB), WebRTC API 완성도 Pion 이 우세
+- **결론**: Go + Pion. `gateway-go/` 에 신규 구현. `gateway/` (Node.js simple-proxy) 는 롤백 대비 보존.
+
+### 11.4 이번 세션 Scope
+
+| 항목 | 처리 |
+|---|---|
+| pod-0 gateway sidecar 이미지 교체 (Node.js → Go) | O |
+| web-viewer 수정 (현행 유지, NVST library 그대로 사용) | X — 이미 동작 |
+| k8s manifest (TURN secret, service, ingress) | 현행 유지 |
+| pod-1 | **건드리지 않음** (사용자 지시 유지) |
+| Isaac Sim / Kit 이미지 | **변경 없음** |
+| coturn | 현행 유지 |
+
+### 11.5 열린 리스크
+
+1. **NVST message type 이름**: offer/answer 의 실제 `type` 문자열이 무엇인지 probe 데이터만으로 확정 필요. `"offer"`/`"answer"`/`"candidate"` 가 표준이나 NVST 가 custom 이름 사용할 가능성 있음 (e.g., `"ice_candidate"`, `"session_offer"`).
+2. **multiple m-sections**: Kit 이 audio+video+datachannel 을 한 offer 에 담는 경우 Gateway 가 모든 m-section 을 match 해서 forward 해야 함.
+3. **ICE trickle vs non-trickle**: Kit 이 candidate 를 초기 SDP 에 embed 하는지 trickle 로 이후 전송하는지에 따라 SDP munger 구현 경로 분기.
+4. **DTLS fingerprint**: Gateway 는 자체 fingerprint 를 SDP 에 주입해야 함 (pion/webrtc 가 자동 처리).
+5. **bandwidth / keyframe**: initial keyframe 요청 bridging (RTCP PLI/FIR) 이 없으면 브라우저 <video> 가 영원히 회색. downstream 의 PLI 를 upstream 으로 proxy 필요.
+
+### 11.6 검증 지표
+
+- `chrome://webrtc-internals` 에 **inbound-rtp (video, H264)** 생성 + `candidate-pair` remote address 가 `10.61.3.74:3478` (coturn) 또는 coturn 의 relay transport-address
+- `kubectl logs coturn -f` 에 pod0-cred allocation 증가
+- `quadrupeds.py` + `play.py` + `train.py` 각 시나리오에서 브라우저에 로봇 움직임 시각 확인
+- 30분 이상 세션 유지 (reconnect 없이)
