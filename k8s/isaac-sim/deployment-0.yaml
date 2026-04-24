@@ -41,12 +41,15 @@ spec:
           value: "30998"
         - name: ISAACSIM_SIGNAL_PORT
           value: "49100"
-        # hostNetwork=true 구성에서는 Kit 의 UDP bind 가 host 네임스페이스에
-        # 있으므로 ISAACSIM_HOST 를 127.0.0.1 (loopback) 로 두면 같은 host 의
-        # gateway Pion 이 loopback 으로 바로 Kit 에 도달 가능하다. 브라우저
-        # 방향은 gateway 의 downstream Pion 이 coturn TURN relay 로 통신.
+        # ISAACSIM_HOST = host IP. Kit 이 `publicIp=host IP` 로 advertise
+        # 하므로 브라우저가 외부에서 hostIP:30998/UDP 로 Kit 에 도달. 실제
+        # Kit UDP bind 는 runheadless-script-0 의 ip_local_port_range pin
+        # (30998 단일 포트) + deployment-0 의 hostPort 30998 매핑으로
+        # advertise 와 일치.
         - name: ISAACSIM_HOST
-          value: "127.0.0.1"
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
         - name: AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
           value: hsscdns://memcached.isaac-launchable.svc.cluster.local
         # NVIDIA_VISIBLE_DEVICES 는 HAMi device-plugin 이 할당 GPU UUID 로 자동 주입.
