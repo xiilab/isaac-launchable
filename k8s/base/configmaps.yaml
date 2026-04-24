@@ -9,6 +9,7 @@ data:
   ENV: instance
   FORCE_WSS: "false"
   SIGNALING_PORT: "80"
+  TURN_URI: "turn:10.61.3.74:3478"
 ---
 # Kit TURN 오버라이드 — 모든 isaac-launchable 파드 공통
 # WebRTC 미디어를 coturn(10.61.3.74:3478)으로 relay 강제 → pod ephemeral UDP 외부 노출 불필요
