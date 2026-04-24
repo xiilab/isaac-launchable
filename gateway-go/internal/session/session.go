@@ -84,39 +84,15 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	st := &state{kitPeerID: 1} // Kit default id = 1, overwritten once observed
 
-	// -- Forward locally-gathered upstream ICE candidates to Kit via
-	// client→server peer_msg (from=browserID, to=kitID).
+	// Upstream Pion peer does NOT trickle candidates to Kit. HandleOffer
+	// waits for GatheringCompletePromise before returning the answer,
+	// so all candidates ride inline in the SDP. Forwarding them again
+	// via OnICECandidate would arrive out-of-order (before Kit sees the
+	// answer) and Kit closes the WS. We only trace the gather-complete
+	// event for observability.
 	kitPeer.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
 			log.Printf("[session] upstream ICE gather complete (nil candidate)")
-			return
-		}
-		init := c.ToJSON()
-		sdpMid := ""
-		if init.SDPMid != nil {
-			sdpMid = *init.SDPMid
-		}
-		idx := 0
-		if init.SDPMLineIndex != nil {
-			idx = int(*init.SDPMLineIndex)
-		}
-		inner := &nvst.PeerMsgInner{
-			Type:          "candidate",
-			Candidate:     init.Candidate,
-			SDPMid:        sdpMid,
-			SDPMLineIndex: idx,
-		}
-		from := int(atomic.LoadInt32(&st.browserPeerID))
-		to := int(atomic.LoadInt32(&st.kitPeerID))
-		log.Printf("[session] gw→kit peer_msg CANDIDATE (from=%d to=%d) %q", from, to, init.Candidate)
-		msg, err := nvst.NewPeerMsgToKit(from, to, inner)
-		if err != nil {
-			log.Printf("[session] upstream→kit cand build: %v", err)
-			return
-		}
-		raw, _ := msg.Encode()
-		if err := ps.SendToKit(raw); err != nil {
-			log.Printf("[session] upstream→kit cand send: %v", err)
 		}
 	})
 
