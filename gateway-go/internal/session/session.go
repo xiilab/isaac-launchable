@@ -212,9 +212,16 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 		case "offer":
 			log.Printf("[session] kit→gw peer_msg OFFER (from=%d, sdp=%d bytes)", outer.From, len(outer.Inner.SDP))
 			ackKitIfNeeded()
-			if err := handleKitOffer(ctx, kitPeer, browserPeer, ps, st, outer.Inner.SDP); err != nil {
-				log.Printf("[session] handleKitOffer: %v", err)
-			}
+			// Handle off the pump goroutine: HandleOffer blocks on
+			// GatheringCompletePromise and would otherwise prevent the
+			// pump from reading Kit's subsequent trickle candidates or
+			// heartbeats, which causes Kit to time out and drop the WS.
+			sdp := outer.Inner.SDP
+			go func() {
+				if err := handleKitOffer(ctx, kitPeer, browserPeer, ps, st, sdp); err != nil {
+					log.Printf("[session] handleKitOffer: %v", err)
+				}
+			}()
 			return false, nil
 		case "answer":
 			log.Printf("[session] kit→gw peer_msg ANSWER (from=%d, sdp=%d bytes)", outer.From, len(outer.Inner.SDP))
