@@ -9,7 +9,7 @@
 //      iceTransportPolicy=relay + coturn iceServers, and forward the
 //      upstream video track to it.
 //   3. Bridge SDP/ICE between the downstream peer and the browser via
-//      Node-exposed functions (window.gwNodeSend, etc.) added by
+//      Node-exposed functions (window.gwPageSendAnswer, etc.) added by
 //      Puppeteer's page.exposeFunction in gateway/main.js.
 
 const cfg = readConfigFromQueryString();
@@ -38,44 +38,257 @@ function setStatus(s) {
   console.log("[gateway]", s);
 }
 
-// ── UPSTREAM (filled in HC3) ─────────────────────────────────
+// Parse cfg.kitSignalUrl into AppStreamer's signalingServer/Port/Path.
+// The library internally constructs the WS URL as
+//   ${proto}://${signalingServer}:${signalingPort}${signalingPath}
+// where signalingPath defaults to "/sign_in".
+function parseKitSignalUrl(urlStr) {
+  const u = new URL(urlStr);
+  const port = u.port ? Number(u.port) : (u.protocol === "wss:" ? 443 : 80);
+  // strip leading slash from path? The library expects a path starting
+  // with "/" based on its default "/sign_in", so pass as-is.
+  const path = u.pathname && u.pathname !== "/" ? u.pathname : "/sign_in";
+  return {
+    host: u.hostname,
+    port,
+    path,
+    secure: u.protocol === "wss:",
+  };
+}
+
+// ── UPSTREAM ──────────────────────────────────────────────────
+// Uses NVIDIA Omniverse WebRTC streaming library (UMD global
+// OVWebStreamingLibrary). The library binds the received video track
+// to an <video> element specified by videoElementId, then we capture
+// its MediaStream via the element's srcObject for forwarding.
 async function startUpstream() {
-  // To implement in HC3 using window.OVWebStreamingLibrary (UMD global).
-  setStatus("upstream-stub");
-  return null;
+  const lib = window.OVWebStreamingLibrary;
+  if (!lib || !lib.AppStreamer) {
+    throw new Error("OVWebStreamingLibrary not loaded");
+  }
+
+  // The library binds to a <video> element by id. Create it if the
+  // HTML shell does not already provide one — the element is never
+  // displayed (headless Chromium), it only serves as a handle to the
+  // MediaStream so we can forward its track downstream.
+  let videoEl = document.getElementById("remote-video");
+  if (!videoEl) {
+    videoEl = document.createElement("video");
+    videoEl.id = "remote-video";
+    videoEl.autoplay = true;
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.style.display = "none";
+    document.body.appendChild(videoEl);
+  }
+
+  const sig = parseKitSignalUrl(cfg.kitSignalUrl);
+
+  // When the library attaches the MediaStream to the <video> element,
+  // .srcObject becomes a MediaStream we can pull the track from. The
+  // event sequence is: loadedmetadata -> playing. We listen on both
+  // and poll srcObject defensively because the sample shows the library
+  // manages playback internally.
+  const captureTrack = () => {
+    if (state.upstreamTrack) return;
+    const stream = videoEl.srcObject;
+    if (!stream || typeof stream.getVideoTracks !== "function") return;
+    const tracks = stream.getVideoTracks();
+    if (tracks.length === 0) return;
+    state.upstreamTrack = tracks[0];
+    console.log("[gateway] upstream video track captured:", state.upstreamTrack.id);
+    maybeStartDownstream();
+  };
+
+  videoEl.addEventListener("loadedmetadata", captureTrack);
+  videoEl.addEventListener("playing", captureTrack);
+
+  const streamConfig = {
+    videoElementId:  "remote-video",
+    signalingServer: sig.host,
+    signalingPort:   sig.port,
+    signalingPath:   sig.path,
+    // For the Kit loopback case, media flows over the same WS/host.
+    mediaServer:     sig.host,
+    mediaPort:       sig.port,
+    forceWSS:        sig.secure,
+    width:           1920,
+    height:          1080,
+    fps:             60,
+    onStart: (message) => {
+      console.log("[gateway] upstream onStart:", message);
+      const action = message && message.action;
+      const status = message && message.status;
+      if (action === "start" && status === "success") {
+        setStatus("upstream-connected");
+        // Track may already be bound by now; try capturing.
+        captureTrack();
+      } else if (status === "error") {
+        setStatus("upstream-error: " + (message.info || "unknown"));
+      }
+    },
+    onStop: (message) => {
+      console.log("[gateway] upstream onStop:", message);
+      setStatus("upstream-stopped");
+    },
+    onTerminate: (message) => {
+      console.log("[gateway] upstream onTerminate:", message);
+      setStatus("upstream-terminated");
+    },
+    onUpdate: (message) => {
+      console.debug("[gateway] upstream onUpdate:", message);
+    },
+    onCustomEvent: (message) => {
+      console.debug("[gateway] upstream custom event:", message);
+    },
+  };
+
+  const streamProps = {
+    streamSource: lib.StreamType ? lib.StreamType.DIRECT : "direct",
+    logLevel:     lib.LogLevel ? lib.LogLevel.INFO : undefined,
+    streamConfig,
+  };
+
+  try {
+    const result = await lib.AppStreamer.connect(streamProps);
+    console.log("[gateway] AppStreamer.connect result:", result);
+    // connect() resolves once setup is complete; the track normally
+    // arrives via loadedmetadata shortly after. captureTrack is also
+    // triggered by onStart above.
+    return lib.AppStreamer;
+  } catch (err) {
+    console.error("[gateway] upstream error:", err);
+    setStatus("upstream-error: " + (err && err.message ? err.message : String(err)));
+    throw err;
+  }
 }
 
-// ── DOWNSTREAM (filled in HC3/HC4) ───────────────────────────
-async function startDownstream(_upstreamTrack) {
-  // To implement in HC3/HC4 with standard RTCPeerConnection +
-  // iceTransportPolicy: 'relay' + iceServers from cfg.
-  setStatus("downstream-stub");
-  return null;
+// ── DOWNSTREAM ────────────────────────────────────────────────
+// Standard RTCPeerConnection with iceTransportPolicy=relay. Forwards
+// the captured upstream video track to the browser via coturn.
+async function startDownstream(videoTrack) {
+  if (!videoTrack) {
+    throw new Error("startDownstream called without a video track");
+  }
+
+  const iceServers = cfg.turnUri
+    ? [{
+        urls: [
+          cfg.turnUri + "?transport=udp",
+          cfg.turnUri + "?transport=tcp",
+        ],
+        username:   cfg.turnUsername,
+        credential: cfg.turnCred,
+      }]
+    : [];
+
+  const pc = new RTCPeerConnection({
+    iceServers,
+    iceTransportPolicy: "relay",
+  });
+
+  pc.addTrack(videoTrack);
+
+  pc.onicecandidate = (ev) => {
+    if (typeof window.gwPageSendIceCandidate === "function") {
+      try {
+        window.gwPageSendIceCandidate(ev.candidate);
+      } catch (err) {
+        console.error("[gateway] gwPageSendIceCandidate threw:", err);
+      }
+    }
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    console.log("[gateway] downstream iceConnectionState:", pc.iceConnectionState);
+  };
+
+  pc.onconnectionstatechange = () => {
+    console.log("[gateway] downstream connectionState:", pc.connectionState);
+    if (pc.connectionState === "connected") {
+      setStatus("downstream-connected");
+    } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      setStatus("downstream-" + pc.connectionState);
+    }
+  };
+
+  // Exposed to Node (via window globals). Node will call these through
+  // page.evaluate after receiving SDP/ICE from the browser client.
+  window.gwHandleBrowserOffer = async (sdp) => {
+    const offer = typeof sdp === "string"
+      ? { type: "offer", sdp }
+      : sdp;
+    await pc.setRemoteDescription(offer);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    return pc.localDescription && pc.localDescription.sdp;
+  };
+
+  window.gwHandleBrowserIceCandidate = async (cand) => {
+    if (!cand) return;
+    try {
+      await pc.addIceCandidate(cand);
+    } catch (err) {
+      console.error("[gateway] addIceCandidate failed:", err);
+    }
+  };
+
+  state.downstreamPeer = pc;
+  setStatus("downstream-ready");
+  return pc;
 }
 
-// ── Browser <-> Node bridge (filled in HC4) ──────────────────
-// These globals are expected to be provided by Puppeteer's
-// page.exposeFunction at runtime; no-op fallback for standalone test.
-window.gwBrowserOffer ??= async (_sdp) => {
-  console.warn("[gateway] gwBrowserOffer not bridged yet");
+// If both sides are ready — upstream track available and no downstream
+// peer yet — create the downstream peer and attach the track.
+function maybeStartDownstream() {
+  if (!state.upstreamTrack) return;
+  if (state.downstreamPeer) return;
+  startDownstream(state.upstreamTrack).catch((err) => {
+    console.error("[gateway] startDownstream error:", err);
+    setStatus("downstream-error: " + (err && err.message ? err.message : String(err)));
+  });
+}
+
+// ── Browser <-> Node bridge (HC4 wires these to Node) ─────────
+// These run inside the page. Node calls them via page.evaluate after
+// receiving SDP/ICE from the browser client over its own channel.
+window.gwBrowserOffer = async (sdp) => {
+  if (!state.downstreamPeer) maybeStartDownstream();
+  if (!state.downstreamPeer) {
+    throw new Error("downstream peer unavailable (upstream track not yet received)");
+  }
+  return window.gwHandleBrowserOffer(sdp);
 };
-window.gwBrowserIceCandidate ??= async (_cand) => {
-  console.warn("[gateway] gwBrowserIceCandidate not bridged yet");
+
+window.gwBrowserIceCandidate = async (cand) => {
+  if (typeof window.gwHandleBrowserIceCandidate === "function") {
+    await window.gwHandleBrowserIceCandidate(cand);
+  } else {
+    console.warn("[gateway] ICE candidate dropped — downstream peer not ready");
+  }
 };
 
 // ── Exposed to Node (HC4) ────────────────────────────────────
-window.gwPageSendAnswer = null;       // Node will overwrite via exposeFunction
-window.gwPageSendIceCandidate = null; // Node will overwrite via exposeFunction
+// Node overwrites these via page.exposeFunction during gateway boot.
+window.gwPageSendAnswer = null;
+window.gwPageSendIceCandidate = null;
 
-// Boot on load.
-window.addEventListener("DOMContentLoaded", async () => {
+// Boot on load. Because this script is loaded as a module (deferred),
+// DOMContentLoaded may have already fired by the time we register the
+// handler, so also fall through to boot immediately in that case.
+async function boot() {
   setStatus("booting");
   try {
     state.upstreamPeer = await startUpstream();
-    // Downstream started lazily when browser connects (handled in HC4).
     setStatus("ready");
   } catch (err) {
     console.error("[gateway] boot error:", err);
-    setStatus("boot-error: " + err.message);
+    setStatus("boot-error: " + (err && err.message ? err.message : String(err)));
   }
-});
+}
+
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", boot);
+} else {
+  boot();
+}
