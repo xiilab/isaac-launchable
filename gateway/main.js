@@ -38,10 +38,12 @@ const wss = new WebSocketServer({ noServer: true });
 
 httpServer.on("upgrade", (req, socket, head) => {
   const reqUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-  if (!reqUrl.pathname.endsWith("/signaling")) {
-    socket.destroy();
-    return;
-  }
+  // Accept any path — ingress already restricts this container's public
+  // surface. The NVIDIA library concatenates its own suffix ("/sign_in")
+  // onto `signalingPath`, so we see paths like "/pod-0/signaling/sign_in"
+  // here; the entire path (minus the ingress-stripped prefix) is irrelevant
+  // — we always forward to Kit's "/sign_in" endpoint with the original
+  // query string.
   wss.handleUpgrade(req, socket, head, (clientWs) => {
     handleClient(clientWs, reqUrl);
   });
