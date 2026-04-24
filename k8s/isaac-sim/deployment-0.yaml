@@ -70,11 +70,9 @@ spec:
           containerPort: 8080
         - name: webrtc-media
           containerPort: 30998
-          hostPort: 30998
           protocol: UDP
         - name: webrtc-signal
           containerPort: 49100
-          hostPort: 49100
           protocol: TCP
         resources:
           requests:
@@ -105,6 +103,35 @@ spec:
           mountPath: /etc/kit-turn.toml
           subPath: turn.toml
           readOnly: true
+      - name: gateway
+        image: 10.61.3.124:30002/library/isaac-launchable-gateway:dev
+        imagePullPolicy: Always
+        env:
+        - { name: KIT_SIGNAL_URL, value: "ws://127.0.0.1:49100/sign_in" }
+        - { name: TURN_URI, value: "turn:10.61.3.74:3478" }
+        - { name: TURN_USERNAME, value: "isaac" }
+        - name: TURN_CREDENTIAL
+          valueFrom:
+            secretKeyRef:
+              name: isaac-launchable-turn
+              key: pod0-cred
+        - { name: LISTEN_ADDR, value: ":9000" }
+        ports:
+        - name: signaling
+          containerPort: 9000
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 9000
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
       - name: nginx
         image: 10.61.3.124:30002/library/isaac-launchable-nginx:latest
         ports:
