@@ -107,7 +107,7 @@ spec:
         image: 10.61.3.124:30002/library/isaac-launchable-gateway:dev
         imagePullPolicy: Always
         env:
-        - { name: KIT_SIGNAL_URL, value: "ws://127.0.0.1:49100/sign_in" }
+        - { name: KIT_SIGNAL_URL, value: "ws://127.0.0.1:49100" }
         - { name: TURN_URI, value: "turn:10.61.3.74:3478" }
         - { name: TURN_USERNAME, value: "isaac" }
         - name: TURN_CREDENTIAL
