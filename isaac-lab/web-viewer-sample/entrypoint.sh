@@ -79,19 +79,11 @@ main() {
   sed -i "s/mediaServer: '[^']*'/mediaServer: '${MEDIA_SERVER}'/" /app/web-viewer-sample/src/main.ts
   sed -i "s/forceWSS: [^,]*/forceWSS: ${FORCE_WSS}/" /app/web-viewer-sample/src/main.ts
 
-  # Inject / update signalingPath on DirectConfig so the browser WebSocket hits
-  # the gateway at e.g. '/pod-0/signaling' instead of Kit's default '/sign_in'.
-  # DirectConfig in @nvidia/omniverse-webrtc-streaming-library declares:
-  #   /** Path for resolving custom NVCF functions. */
-  #   signalingPath?: string;
-  # so this is a library-supported field.
-  if grep -q "signalingPath:" /app/web-viewer-sample/src/main.ts; then
-    sed -i "s|signalingPath: '[^']*'|signalingPath: '${SIGNAL_PATH}'|" /app/web-viewer-sample/src/main.ts
-  else
-    # Inject a signalingPath line directly after signalingPort on the same indent level.
-    sed -i "s|signalingPort: ${SIGNALING_PORT},|signalingPort: ${SIGNALING_PORT},\n            signalingPath: '${SIGNAL_PATH}',|" \
-      /app/web-viewer-sample/src/main.ts
-  fi
+  # Browser uses the library's default signalingPath ('/sign_in') and hits it
+  # through the nginx sidecar's /sign_in -> 49100 proxy. The gateway sidecar
+  # is unused on this path; we intentionally do NOT inject a signalingPath
+  # override because the library appends its own '/sign_in' suffix, which
+  # would produce a duplicated path.
 
   # Inject an RTCPeerConnection override at the top of main.ts so the browser
   # peer uses the coturn relay. DirectConfig does NOT expose iceServers /
