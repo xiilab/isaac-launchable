@@ -54,8 +54,9 @@ func (p *KitPeer) PC() *webrtc.PeerConnection { return p.pc }
 func (p *KitPeer) Tracks() <-chan *webrtc.TrackRemote { return p.tracks }
 
 // HandleOffer applies Kit's offer SDP and returns the Gateway's answer
-// SDP with all ICE candidates inline (non-trickle). Waits for gathering
-// to complete so Kit sees the final candidate set in one shot.
+// SDP immediately (trickle mode — candidates flow via OnICECandidate).
+// Kit advertises `a=ice-options:trickle`; a non-trickle answer with
+// `a=end-of-candidates` was observed to provoke Kit to close the WS.
 func (p *KitPeer) HandleOffer(sdp string) (string, error) {
 	offer := webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}
 	if err := p.pc.SetRemoteDescription(offer); err != nil {
@@ -65,16 +66,10 @@ func (p *KitPeer) HandleOffer(sdp string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("upstream: create answer: %w", err)
 	}
-	gatherComplete := webrtc.GatheringCompletePromise(p.pc)
 	if err := p.pc.SetLocalDescription(answer); err != nil {
 		return "", fmt.Errorf("upstream: set local answer: %w", err)
 	}
-	<-gatherComplete
-	final := p.pc.LocalDescription()
-	if final == nil {
-		return answer.SDP, nil
-	}
-	return final.SDP, nil
+	return answer.SDP, nil
 }
 
 // AddCandidate trickles in an ICE candidate from Kit.
