@@ -32,6 +32,12 @@ spec:
       - name: vscode
         image: 10.61.3.124:30002/library/isaac-launchable-vscode:6.0.0
         imagePullPolicy: Always
+        # NET_ADMIN = /proc/sys/net/ipv4/ip_local_port_range 쓰기 권한.
+        # runheadless-script-0 이 Kit ephemeral UDP bind 를 30998 로 pinning 할 때만 사용.
+        # privileged:true 와 달리 커널 네트워크 sysctl write 만 허용하는 좁은 capability.
+        securityContext:
+          capabilities:
+            add: ["NET_ADMIN"]
         env:
         - name: ACCEPT_EULA
           value: "Y"
