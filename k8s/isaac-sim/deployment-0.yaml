@@ -41,19 +41,10 @@ spec:
           value: "30998"
         - name: ISAACSIM_SIGNAL_PORT
           value: "49100"
-        # gateway-go SFU 구성: Kit 가 loopback candidate 를 advertise 하게 하여
-        # pod 내부 upstream Pion peer 가 Kit 의 실제 ephemeral UDP 포트로
-        # 바로 연결 가능하도록.
-        #
-        # - publicIp=10.61.3.74 (host IP): Kit 이 host:PORT 로 candidate advertise,
-        #   hostPort 매핑 없어 pod 안에서 도달 불가.
-        # - publicIp="" (빈값): Kit 이 SDP 에 candidate 자체를 안 포함시키고,
-        #   ephemeral UDP 포트도 unknown → gateway 가 타겟 주소를 모름.
-        # - publicIp=127.0.0.1: Kit 이 `candidate:X 1 udp ... 127.0.0.1 <ephemeral>
-        #   typ host` 형식으로 advertise → gateway upstream Pion 이 같은 pod 의
-        #   loopback 으로 바로 도달 가능.
-        #
-        # pod-0 에서만 127.0.0.1. pod-1 은 기존 publicIp=hostIP 유지 (gateway 없음).
+        # hostNetwork=true 구성에서는 Kit 의 UDP bind 가 host 네임스페이스에
+        # 있으므로 ISAACSIM_HOST 를 127.0.0.1 (loopback) 로 두면 같은 host 의
+        # gateway Pion 이 loopback 으로 바로 Kit 에 도달 가능하다. 브라우저
+        # 방향은 gateway 의 downstream Pion 이 coturn TURN relay 로 통신.
         - name: ISAACSIM_HOST
           value: "127.0.0.1"
         - name: AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
