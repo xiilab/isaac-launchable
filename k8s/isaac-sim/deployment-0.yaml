@@ -151,18 +151,6 @@ spec:
           value: "0"
         - name: SIGNAL_URL
           value: /sign_in
-        - { name: SIGNAL_PATH, value: "/pod-0/signaling" }
-        - name: TURN_URI
-          valueFrom:
-            configMapKeyRef:
-              name: isaac-launchable-config
-              key: TURN_URI
-        - { name: TURN_USERNAME, value: "isaac" }
-        - name: TURN_CREDENTIAL
-          valueFrom:
-            secretKeyRef:
-              name: isaac-launchable-turn
-              key: pod0-cred
         ports:
         - name: viewer
           containerPort: 5173
