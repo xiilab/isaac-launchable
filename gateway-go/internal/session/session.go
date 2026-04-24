@@ -87,14 +87,16 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 		return fmt.Errorf("session: downstream: %w", err)
 	}
 
-	// Pre-add recvonly transceivers on the downstream peer so the first
-	// offer to the browser already has audio+video m-sections. Without
-	// these, CreateOffer produces an SDP with no media lines and the
-	// browser's streaming library rejects it as "StreamerNoOffer" while
-	// we wait for upstream tracks to arrive.
+	// Pre-add SENDONLY transceivers on the downstream peer (gateway
+	// sends media to the browser; the browser receives). An earlier
+	// version used Recvonly, which made our offer declare "I won't
+	// send video" and triggered StreamerNoVideoTrack in the NVST
+	// library. When upstream tracks arrive, attachAndForward swaps in
+	// the real track via RTPSender.ReplaceTrack so negotiation stays
+	// stable.
 	for _, kind := range []webrtc.RTPCodecType{webrtc.RTPCodecTypeVideo, webrtc.RTPCodecTypeAudio} {
 		if _, err := browserPeer.PC().AddTransceiverFromKind(kind, webrtc.RTPTransceiverInit{
-			Direction: webrtc.RTPTransceiverDirectionRecvonly,
+			Direction: webrtc.RTPTransceiverDirectionSendonly,
 		}); err != nil {
 			log.Printf("[session] downstream add %s transceiver: %v", kind, err)
 		}
@@ -510,7 +512,9 @@ func bridgeBrowserOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstrea
 }
 
 // attachAndForward creates a TrackLocalStaticRTP matching the remote's
-// codec and starts the RTP pump.
+// codec, swaps it into an existing sendonly transceiver of the matching
+// kind (preferred, no renegotiation needed), and starts the RTP pump.
+// Falls back to AddTrack if no pre-added transceiver is available.
 func attachAndForward(ctx context.Context, remote *webrtc.TrackRemote, bp *downstream.BrowserPeer) error {
 	codec := remote.Codec()
 	local, err := webrtc.NewTrackLocalStaticRTP(
@@ -527,9 +531,9 @@ func attachAndForward(ctx context.Context, remote *webrtc.TrackRemote, bp *downs
 	if err != nil {
 		return fmt.Errorf("new local track: %w", err)
 	}
-	sender, err := bp.AddTrack(local)
+	sender, err := replaceOrAddTrack(bp, local, remote.Kind())
 	if err != nil {
-		return fmt.Errorf("add track to downstream: %w", err)
+		return fmt.Errorf("attach track: %w", err)
 	}
 	go drainRTCP(ctx, sender)
 	go func() {
@@ -537,6 +541,32 @@ func attachAndForward(ctx context.Context, remote *webrtc.TrackRemote, bp *downs
 		log.Printf("[session] track %s: forwarded %d packets, err=%v", remote.ID(), count, err)
 	}()
 	return nil
+}
+
+// replaceOrAddTrack looks for an existing sendonly transceiver of the
+// given kind whose sender has no track yet, and swaps in `local`.
+// If none is found, falls back to AddTrack (which creates a new
+// transceiver and requires renegotiation).
+func replaceOrAddTrack(bp *downstream.BrowserPeer, local *webrtc.TrackLocalStaticRTP, kind webrtc.RTPCodecType) (*webrtc.RTPSender, error) {
+	for _, t := range bp.PC().GetTransceivers() {
+		if t.Kind() != kind {
+			continue
+		}
+		sender := t.Sender()
+		if sender == nil {
+			continue
+		}
+		if sender.Track() != nil {
+			continue // already has a track
+		}
+		if err := sender.ReplaceTrack(local); err != nil {
+			return nil, fmt.Errorf("replace track on transceiver: %w", err)
+		}
+		log.Printf("[session] replaced track on pre-added %s transceiver", kind)
+		return sender, nil
+	}
+	log.Printf("[session] no pre-added %s transceiver found, adding new (will renegotiate)", kind)
+	return bp.AddTrack(local)
 }
 
 func drainRTCP(ctx context.Context, sender *webrtc.RTPSender) {
