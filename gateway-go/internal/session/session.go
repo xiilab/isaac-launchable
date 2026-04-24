@@ -218,12 +218,17 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 		// never see it and thus never send {"ack":N}. We must ack Kit
 		// ourselves or Kit drops the WS as "unacknowledged".
 		ackKitIfNeeded := func() {
-			if ackid, ok := m.Ackid(); ok {
-				ackMsg := nvst.NewAck(ackid)
-				rawAck, _ := ackMsg.Encode()
-				if err := ps.SendToKit(rawAck); err != nil {
-					log.Printf("[session] auto-ack %d to kit: %v", ackid, err)
-				}
+			ackid, ok := m.Ackid()
+			if !ok {
+				log.Printf("[session] intercepted frame has no ackid; raw=%q", firstN(raw, 120))
+				return
+			}
+			ackMsg := nvst.NewAck(ackid)
+			rawAck, _ := ackMsg.Encode()
+			if err := ps.SendToKit(rawAck); err != nil {
+				log.Printf("[session] auto-ack %d to kit: %v", ackid, err)
+			} else {
+				log.Printf("[session] gw→kit auto-ack %d", ackid)
 			}
 		}
 
