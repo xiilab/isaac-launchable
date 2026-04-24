@@ -343,12 +343,12 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 // sends our answer back to Kit (wrapped in a browser→server peer_msg),
 // and schedules a downstream offer to the browser.
 func handleKitOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstream.BrowserPeer, ps *proxy.Session, st *state, sdp string) error {
-	log.Printf("[session] kit offer FULL:\n%s", sdp)
+	log.Printf("[session] kit offer received (%d bytes sdp)", len(sdp))
 	answerSDP, err := kp.HandleOffer(sdp)
 	if err != nil {
 		return fmt.Errorf("upstream HandleOffer: %w", err)
 	}
-	log.Printf("[session] gw answer FULL:\n%s", answerSDP)
+	log.Printf("[session] gw answer generated (%d bytes sdp)", len(answerSDP))
 
 	answerInner := &nvst.PeerMsgInner{Type: "answer", SDP: answerSDP}
 	answerMsg, err := nvst.NewPeerMsgToKit(
@@ -360,13 +360,10 @@ func handleKitOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstream.Br
 		return fmt.Errorf("build answer peer_msg: %w", err)
 	}
 	answerRaw, _ := answerMsg.Encode()
-	// Log first 500 bytes of the literal frame payload to verify JSON
-	// shape matches Kit's expected envelope.
-	log.Printf("[session] gw→kit answer frame (first 500B of %d):\n%s", len(answerRaw), firstSDPN(string(answerRaw), 500))
 	if err := ps.SendToKit(answerRaw); err != nil {
 		return fmt.Errorf("send answer to kit: %w", err)
 	}
-	log.Printf("[session] gw→kit peer_msg ANSWER sent (sdp=%d bytes)", len(answerSDP))
+	log.Printf("[session] gw→kit peer_msg ANSWER sent (%d bytes raw frame)", len(answerRaw))
 
 	go buildBrowserOfferAfterUpstream(ctx, kp, bp, ps, st)
 	return nil
