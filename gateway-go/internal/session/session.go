@@ -81,6 +81,19 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 		return fmt.Errorf("session: downstream: %w", err)
 	}
 
+	// Pre-add recvonly transceivers on the downstream peer so the first
+	// offer to the browser already has audio+video m-sections. Without
+	// these, CreateOffer produces an SDP with no media lines and the
+	// browser's streaming library rejects it as "StreamerNoOffer" while
+	// we wait for upstream tracks to arrive.
+	for _, kind := range []webrtc.RTPCodecType{webrtc.RTPCodecTypeVideo, webrtc.RTPCodecTypeAudio} {
+		if _, err := browserPeer.PC().AddTransceiverFromKind(kind, webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionRecvonly,
+		}); err != nil {
+			log.Printf("[session] downstream add %s transceiver: %v", kind, err)
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	st := &state{kitPeerID: 1} // Kit default id = 1, overwritten once observed
 
@@ -365,7 +378,7 @@ func handleKitOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstream.Br
 	}
 	log.Printf("[session] gw→kit peer_msg ANSWER sent (%d bytes raw frame)", len(answerRaw))
 
-	go buildBrowserOfferAfterUpstream(ctx, kp, bp, ps, st)
+	go buildBrowserOffer(ctx, kp, bp, ps, st)
 	return nil
 }
 
@@ -379,27 +392,14 @@ func firstSDPN(sdp string, n int) string {
 // buildBrowserOfferAfterUpstream waits for upstream ICE to reach
 // connected state (meaning tracks are flowing), then constructs a
 // downstream offer and sends it to the browser.
-func buildBrowserOfferAfterUpstream(ctx context.Context, kp *upstream.KitPeer, bp *downstream.BrowserPeer, ps *proxy.Session, st *state) {
-	connected := make(chan struct{})
-	var once sync.Once
+func buildBrowserOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstream.BrowserPeer, ps *proxy.Session, st *state) {
 	kp.PC().OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
 		log.Printf("[session] upstream ICE state: %s", s)
-		if s == webrtc.ICEConnectionStateConnected || s == webrtc.ICEConnectionStateCompleted {
-			once.Do(func() { close(connected) })
-		}
 	})
 	select {
 	case <-ctx.Done():
 		return
-	case <-connected:
-		log.Printf("[session] upstream connected; scheduling downstream offer")
-	case <-time.After(20 * time.Second):
-		log.Printf("[session] timeout waiting for upstream connected; sending offer anyway")
-	}
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(300 * time.Millisecond):
+	default:
 	}
 
 	offerSDP, err := bp.CreateOffer()
