@@ -1,14 +1,13 @@
 {
   "name": "isaac-launchable-gateway",
-  "version": "0.1.0",
-  "description": "Headless Chromium-backed WebRTC gateway bridging Isaac Sim Kit livestream to browsers via coturn relay.",
+  "version": "0.2.0",
+  "description": "Minimal WebSocket proxy between browser and Kit omni.kit.livestream.app /sign_in endpoint.",
   "main": "main.js",
   "type": "module",
   "scripts": {
     "start": "node main.js"
   },
   "dependencies": {
-    "puppeteer": "^23.0.0",
     "ws": "^8.18.0"
   }
 }
