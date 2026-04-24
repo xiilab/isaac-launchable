@@ -28,16 +28,20 @@ spec:
       dnsConfig:
         searches:
         - isaac-launchable-headless.isaac-launchable.svc.cluster.local
+      # Kit 의 ephemeral UDP bind 를 30998 로 pinning. /proc/sys 가
+      # 컨테이너 내부에서 read-only mount 이므로 runheadless.sh 의 echo
+      # 로는 설정 불가 → k8s native sysctl injection 사용. k0s 1.22+ 에서
+      # ip_local_port_range 는 safe sysctl 로 허용됨.
+      securityContext:
+        sysctls:
+        - name: net.ipv4.ip_local_port_range
+          value: "30998 30998"
       containers:
       - name: vscode
         image: 10.61.3.124:30002/library/isaac-launchable-vscode:6.0.0
         imagePullPolicy: Always
-        # NET_ADMIN = /proc/sys/net/ipv4/ip_local_port_range 쓰기 권한.
-        # runheadless-script-0 이 Kit ephemeral UDP bind 를 30998 로 pinning 할 때만 사용.
-        # privileged:true 와 달리 커널 네트워크 sysctl write 만 허용하는 좁은 capability.
-        securityContext:
-          capabilities:
-            add: ["NET_ADMIN"]
+        # port pin 은 pod-level securityContext.sysctls 에서 처리 (위 spec.securityContext).
+        # 컨테이너 레벨에서 추가 capability 불필요.
         env:
         - name: ACCEPT_EULA
           value: "Y"
