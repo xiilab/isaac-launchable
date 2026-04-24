@@ -21,6 +21,16 @@ function parseListenAddr(v) {
   return { host: host || "0.0.0.0", port: parseInt(port, 10) || 9000 };
 }
 
+// WebSocket close-code validation: some codes (1005/1006) are reserved and
+// must not be sent on the wire. Pass them through as a generic 1000 so ws
+// library does not throw.
+function safeCloseCode(code) {
+  if (typeof code !== "number") return 1000;
+  if (code < 1000 || code >= 5000) return 1000;
+  if (code === 1005 || code === 1006) return 1000;
+  return code;
+}
+
 const KIT_SIGNAL_URL = process.env.KIT_SIGNAL_URL || "ws://127.0.0.1:49100";
 const listen = parseListenAddr(process.env.LISTEN_ADDR || ":9000");
 
@@ -73,7 +83,7 @@ function handleClient(clientWs, reqUrl) {
   });
   upstream.on("close", (code, reason) => {
     console.log(`[gateway] upstream close ${code} ${reason}`);
-    if (clientWs.readyState === WebSocket.OPEN) clientWs.close(code);
+    if (clientWs.readyState === WebSocket.OPEN) clientWs.close(safeCloseCode(code));
   });
   upstream.on("error", (err) => {
     console.warn("[gateway] upstream error:", err.message);
@@ -88,7 +98,7 @@ function handleClient(clientWs, reqUrl) {
   });
   clientWs.on("close", (code) => {
     console.log(`[gateway] client close ${code}`);
-    if (upstream.readyState === WebSocket.OPEN) upstream.close(code);
+    if (upstream.readyState === WebSocket.OPEN) upstream.close(safeCloseCode(code));
   });
   clientWs.on("error", (err) => {
     console.warn("[gateway] client error:", err.message);
