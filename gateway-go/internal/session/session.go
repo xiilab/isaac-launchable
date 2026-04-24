@@ -27,6 +27,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
+	"time"
 
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
@@ -233,20 +235,39 @@ func attachAndForward(ctx context.Context, remote *webrtc.TrackRemote, bp *downs
 	return nil
 }
 
-// buildBrowserOffer waits briefly for any upstream tracks to be attached,
-// then generates a downstream offer and sends it to the browser.
+// buildBrowserOffer waits for the upstream peer's ICE connection to
+// reach "connected" state (tracks should be attached by then via OnTrack
+// and the attachAndForward goroutine), debounces briefly, then generates
+// a downstream offer and sends it to the browser.
 //
-// In practice the browser peer can renegotiate if tracks arrive later,
-// but the initial offer should carry whatever tracks exist at that point.
+// This is best-effort: if the upstream never connects within the timeout,
+// we attempt the offer anyway so the browser sees something. Subsequent
+// AddTrack calls trigger OnNegotiationNeeded on the downstream peer and
+// re-offer via the same path.
 func buildBrowserOffer(ctx context.Context, bp *downstream.BrowserPeer, ps *proxy.Session, kp *upstream.KitPeer) {
-	// Wait until the upstream peer's connection is "connected" or a
-	// timeout. We piggyback on its state; a real implementation might
-	// wait for a specific number of tracks.
-	_ = kp
+	connected := make(chan struct{})
+	var once sync.Once
+	kp.PC().OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		log.Printf("[session] upstream ICE state: %s", state)
+		if state == webrtc.ICEConnectionStateConnected || state == webrtc.ICEConnectionStateCompleted {
+			once.Do(func() { close(connected) })
+		}
+	})
+
 	select {
 	case <-ctx.Done():
 		return
-	default:
+	case <-connected:
+		log.Printf("[session] upstream connected; scheduling downstream offer")
+	case <-time.After(20 * time.Second):
+		log.Printf("[session] timeout waiting for upstream connected; sending offer anyway")
+	}
+
+	// Debounce so any burst of OnTrack calls lands before we build SDP.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(300 * time.Millisecond):
 	}
 
 	offerSDP, err := bp.CreateOffer()
@@ -260,7 +281,7 @@ func buildBrowserOffer(ctx context.Context, bp *downstream.BrowserPeer, ps *prox
 		log.Printf("[session] downstream offer send: %v", err)
 		return
 	}
-	log.Printf("[session] downstream offer sent to browser")
+	log.Printf("[session] downstream offer sent to browser (%d bytes)", len(offerSDP))
 }
 
 func drainRTCP(ctx context.Context, sender *webrtc.RTPSender) {
