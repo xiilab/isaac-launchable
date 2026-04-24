@@ -104,7 +104,12 @@ spec:
           subPath: turn.toml
           readOnly: true
       - name: gateway
-        image: 10.61.3.124:30002/library/isaac-launchable-gateway:dev
+        # Go Pion SFU gateway: upstream peer ↔ Kit (pod loopback),
+        # downstream peer ↔ browser (TURN relay enforced). Replaces the
+        # Node.js signaling-only proxy so Kit's ephemeral UDP candidates
+        # stay inside the pod while the browser reaches media via coturn.
+        # Rollback: swap image back to isaac-launchable-gateway:dev.
+        image: 10.61.3.124:30002/library/isaac-launchable-gateway-go:dev
         imagePullPolicy: Always
         env:
         - { name: KIT_SIGNAL_URL, value: "ws://127.0.0.1:49100" }
