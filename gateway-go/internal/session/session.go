@@ -87,19 +87,18 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 		return fmt.Errorf("session: downstream: %w", err)
 	}
 
-	// Pre-add SENDONLY transceivers on the downstream peer (gateway
-	// sends media to the browser; the browser receives). An earlier
-	// version used Recvonly, which made our offer declare "I won't
-	// send video" and triggered StreamerNoVideoTrack in the NVST
-	// library. When upstream tracks arrive, attachAndForward swaps in
-	// the real track via RTPSender.ReplaceTrack so negotiation stays
-	// stable.
-	for _, kind := range []webrtc.RTPCodecType{webrtc.RTPCodecTypeVideo, webrtc.RTPCodecTypeAudio} {
-		if _, err := browserPeer.PC().AddTransceiverFromKind(kind, webrtc.RTPTransceiverInit{
-			Direction: webrtc.RTPTransceiverDirectionSendonly,
-		}); err != nil {
-			log.Printf("[session] downstream add %s transceiver: %v", kind, err)
-		}
+	// Pre-add a SENDONLY video transceiver on the downstream peer.
+	//
+	// Audio is intentionally omitted. The NVST browser library demands
+	// a DOM `<audio>` element when the offer contains an audio track
+	// (StreamerNeedAudioElement), and the web-viewer sample does not
+	// provide one. For the Isaac Sim viewport use case (robot videos),
+	// audio is not needed, so dropping it from the offer satisfies the
+	// library without touching the web-viewer.
+	if _, err := browserPeer.PC().AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionSendonly,
+	}); err != nil {
+		log.Printf("[session] downstream add video transceiver: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
