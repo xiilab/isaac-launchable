@@ -1,5 +1,4 @@
 /bin/
-/gateway
 *.test
 coverage.out
 .DS_Store
