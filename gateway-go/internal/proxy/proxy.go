@@ -15,10 +15,15 @@ import (
 
 // Session represents one browser connection paired with one upstream Kit
 // connection. Hooks are set synchronously by the SessionFactory before
-// any frame pump starts.
+// any frame pump starts. All writes to Client/Kit MUST go through Send/
+// SendToKit, which serialize on a per-side mutex — gorilla/websocket
+// requires the caller to ensure only one goroutine writes at a time.
 type Session struct {
 	Client *websocket.Conn
 	Kit    *websocket.Conn
+
+	clientWrite sync.Mutex
+	kitWrite    sync.Mutex
 
 	// OnClientMessage is invoked for every frame received from the
 	// browser. Returning forward=false consumes the frame (not
@@ -89,17 +94,9 @@ func NewHandler(kitURL string, factory SessionFactory) http.Handler {
 // reads from sess.Client and writes to sess.Kit (invoking
 // OnClientMessage). Otherwise the reverse.
 func pump(sess *Session, fromClient bool) {
-	var src, dst *websocket.Conn
-	var hook func([]byte) (bool, error)
-	var label string
-	if fromClient {
-		src, dst = sess.Client, sess.Kit
-		hook = sess.OnClientMessage
-		label = "client→kit"
-	} else {
-		src, dst = sess.Kit, sess.Client
-		hook = sess.OnKitMessage
-		label = "kit→client"
+	src, hook, writer, label := sess.Client, sess.OnClientMessage, sess.writeToKit, "client→kit"
+	if !fromClient {
+		src, hook, writer, label = sess.Kit, sess.OnKitMessage, sess.writeToClient, "kit→client"
 	}
 
 	for {
@@ -122,7 +119,7 @@ func pump(sess *Session, fromClient bool) {
 		if !forward {
 			continue
 		}
-		if err := dst.WriteMessage(mt, data); err != nil {
+		if err := writer(mt, data); err != nil {
 			log.Printf("[proxy] %s write: %v", label, err)
 			sess.tearDown()
 			return
@@ -130,14 +127,26 @@ func pump(sess *Session, fromClient bool) {
 	}
 }
 
-// Send writes a frame to the client side. Safe for use from hooks.
+// Send writes a text frame to the client. Serialized via clientWrite.
 func (s *Session) Send(data []byte) error {
-	return s.Client.WriteMessage(websocket.TextMessage, data)
+	return s.writeToClient(websocket.TextMessage, data)
 }
 
-// SendToKit writes a frame to the upstream Kit side.
+// SendToKit writes a text frame to Kit. Serialized via kitWrite.
 func (s *Session) SendToKit(data []byte) error {
-	return s.Kit.WriteMessage(websocket.TextMessage, data)
+	return s.writeToKit(websocket.TextMessage, data)
+}
+
+func (s *Session) writeToClient(mt int, data []byte) error {
+	s.clientWrite.Lock()
+	defer s.clientWrite.Unlock()
+	return s.Client.WriteMessage(mt, data)
+}
+
+func (s *Session) writeToKit(mt int, data []byte) error {
+	s.kitWrite.Lock()
+	defer s.kitWrite.Unlock()
+	return s.Kit.WriteMessage(mt, data)
 }
 
 func (s *Session) tearDown() {
