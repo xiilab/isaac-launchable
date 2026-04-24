@@ -28,6 +28,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -166,13 +167,27 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 			log.Printf("[session] kit→gw non-JSON %d bytes: %q", len(raw), firstN(raw, 80))
 			return true, nil
 		}
-		// Record browser peer_id from Kit's peer_info announcement.
+		// Kit broadcasts multiple peer_info frames: one for the browser
+		// (name "peer-NNN…") and one for itself ("OneSdkServer-…"). We
+		// must distinguish by name — overwriting browserPeerID with
+		// Kit's id (usually 1) breaks outgoing candidate routing.
 		if pi, ok := m.PeerInfo(); ok {
+			name, _ := pi["name"].(string)
+			idVal := 0
 			if idF, ok := pi["id"].(float64); ok {
-				atomic.StoreInt32(&st.browserPeerID, int32(idF))
-				log.Printf("[session] learned browser peer_id = %d from peer_info", int(idF))
+				idVal = int(idF)
 			}
-			return true, nil // forward peer_info to browser unchanged
+			switch {
+			case strings.HasPrefix(name, "OneSdkServer"):
+				atomic.StoreInt32(&st.kitPeerID, int32(idVal))
+				log.Printf("[session] learned Kit peer_id = %d from peer_info (%s)", idVal, name)
+			case strings.HasPrefix(name, "peer-"):
+				atomic.StoreInt32(&st.browserPeerID, int32(idVal))
+				log.Printf("[session] learned browser peer_id = %d from peer_info (%s)", idVal, name)
+			default:
+				log.Printf("[session] peer_info id=%d name=%q (unknown role)", idVal, name)
+			}
+			return true, nil // always forward peer_info to browser unchanged
 		}
 		outer, ok := m.AsPeerMsg()
 		if !ok {
