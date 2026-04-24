@@ -274,6 +274,20 @@ metadata:
 data:
   runheadless.sh: |
     #! /bin/sh
+    # ─────────────────────────────────────────────────────────────
+    # Kit ephemeral UDP bind 를 30998 로 pinning (pod-0 전용).
+    # 요구: vscode 컨테이너 securityContext.capabilities=["NET_ADMIN"]
+    # 원리: bind(port=0) → 커널이 ip_local_port_range 범위에서 할당 →
+    #       범위가 단일 포트이면 항상 그 포트를 할당.
+    # ─────────────────────────────────────────────────────────────
+    if [ -w /proc/sys/net/ipv4/ip_local_port_range ]; then
+      echo "30998 30998" > /proc/sys/net/ipv4/ip_local_port_range
+      echo "[runheadless] pinned ip_local_port_range to 30998"
+    else
+      echo "[runheadless] WARN: /proc/sys/net/ipv4/ip_local_port_range not writable" >&2
+      echo "[runheadless] WARN: NET_ADMIN capability required; Kit will use random ephemeral port" >&2
+    fi
+
     # Kill any orphaned Kit streaming process holding TCP 49100 before starting
     pkill -f 'isaacsim.exp.full.streaming.kit' 2>/dev/null || true
     sleep 1
