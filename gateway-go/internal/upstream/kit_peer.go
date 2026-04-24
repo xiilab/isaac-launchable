@@ -55,11 +55,12 @@ func (p *KitPeer) PC() *webrtc.PeerConnection { return p.pc }
 func (p *KitPeer) Tracks() <-chan *webrtc.TrackRemote { return p.tracks }
 
 // HandleOffer applies Kit's offer SDP and returns the Gateway's answer.
-// Kit is ICE-lite and publishes no candidates (publicIp unset, c= is
-// 0.0.0.0). We inject a loopback candidate so Pion can reach Kit over
-// pod loopback at the port Kit listens on (30998/UDP).
+// With ISAACSIM_HOST=127.0.0.1 in the deployment, Kit itself advertises
+// `a=candidate:X 1 udp ... 127.0.0.1 <ephemeral-udp-port> typ host` in
+// its offer, so no gateway-side rewrite is needed — Pion sees a concrete
+// target and can establish connectivity over pod loopback.
 func (p *KitPeer) HandleOffer(sdp string) (string, error) {
-	offer := webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: rewriteKitOffer(sdp)}
+	offer := webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}
 	if err := p.pc.SetRemoteDescription(offer); err != nil {
 		return "", fmt.Errorf("upstream: set remote offer: %w", err)
 	}

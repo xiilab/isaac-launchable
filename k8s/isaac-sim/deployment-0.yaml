@@ -41,12 +41,21 @@ spec:
           value: "30998"
         - name: ISAACSIM_SIGNAL_PORT
           value: "49100"
-        # runheadless.sh 가 --/exts/omni.kit.livestream.app/primaryStream/publicIp 로 주입.
-        # 비어 있으면 NVST 가 pod internal IP (10.244.x.x) 을 candidate 로 advertise → 외부 도달 불가.
+        # gateway-go SFU 구성: Kit 가 loopback candidate 를 advertise 하게 하여
+        # pod 내부 upstream Pion peer 가 Kit 의 실제 ephemeral UDP 포트로
+        # 바로 연결 가능하도록.
+        #
+        # - publicIp=10.61.3.74 (host IP): Kit 이 host:PORT 로 candidate advertise,
+        #   hostPort 매핑 없어 pod 안에서 도달 불가.
+        # - publicIp="" (빈값): Kit 이 SDP 에 candidate 자체를 안 포함시키고,
+        #   ephemeral UDP 포트도 unknown → gateway 가 타겟 주소를 모름.
+        # - publicIp=127.0.0.1: Kit 이 `candidate:X 1 udp ... 127.0.0.1 <ephemeral>
+        #   typ host` 형식으로 advertise → gateway upstream Pion 이 같은 pod 의
+        #   loopback 으로 바로 도달 가능.
+        #
+        # pod-0 에서만 127.0.0.1. pod-1 은 기존 publicIp=hostIP 유지 (gateway 없음).
         - name: ISAACSIM_HOST
-          valueFrom:
-            fieldRef:
-              fieldPath: status.hostIP
+          value: "127.0.0.1"
         - name: AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
           value: hsscdns://memcached.isaac-launchable.svc.cluster.local
         # NVIDIA_VISIBLE_DEVICES 는 HAMi device-plugin 이 할당 GPU UUID 로 자동 주입.
