@@ -55,9 +55,11 @@ func NewHandler(kitURL string, factory SessionFactory) http.Handler {
 			log.Printf("[proxy] client upgrade: %v", err)
 			return
 		}
-		// Forward the same query string to Kit so peer_id / version /
-		// reconnect survive.
-		upstreamURL := kitURL
+		// Forward the same path + query to Kit so `/sign_in` +
+		// peer_id/version/reconnect survive. kitURL is the base
+		// (e.g. "ws://127.0.0.1:49100") with no path; the request path
+		// (typically "/sign_in") comes from the browser via nginx.
+		upstreamURL := kitURL + r.URL.Path
 		if r.URL.RawQuery != "" {
 			upstreamURL = upstreamURL + "?" + r.URL.RawQuery
 		}
