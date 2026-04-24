@@ -30,6 +30,9 @@ spec:
   - name: http
     port: 80
     targetPort: 80
+  - name: signaling
+    port: 9000
+    targetPort: 9000
 ---
 # Isaac Sim (Pod-1) ClusterIP 서비스
 apiVersion: v1
@@ -62,26 +65,6 @@ spec:
   - name: http
     port: 80
     targetPort: 80
----
-# Isaac Sim (Pod-0) WebRTC 미디어 NodePort 서비스
-# UDP 미디어 트래픽을 노드 포트로 직접 노출
-apiVersion: v1
-kind: Service
-metadata:
-  name: isaac-launchable-0-media
-  namespace: isaac-launchable
-spec:
-  type: NodePort
-  externalTrafficPolicy: Local
-  selector:
-    app: isaac-launchable
-    instance: pod-0
-  ports:
-  - name: webrtc-media
-    port: 30998
-    targetPort: 30998
-    nodePort: 30998
-    protocol: UDP
 ---
 # Isaac Sim (Pod-1) WebRTC 미디어 NodePort 서비스
 apiVersion: v1
