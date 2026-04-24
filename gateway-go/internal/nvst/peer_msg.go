@@ -154,6 +154,11 @@ func NewPeerMsgToKit(from, to int, inner *PeerMsgInner) (*Message, error) {
 	}}, nil
 }
 
+// NewAck builds a bare ack frame: {"ack":N}
+func NewAck(ackid int) *Message {
+	return &Message{raw: map[string]any{"ack": ackid}}
+}
+
 // NewPeerMsgToBrowser builds a server→client envelope with ackid:
 //
 //	{"ackid":N,"peer_msg":{"from":1,"msg":"<JSON>"}}

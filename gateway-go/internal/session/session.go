@@ -214,15 +214,30 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 		}
 		atomic.StoreInt32(&st.kitPeerID, int32(outer.From))
 
+		// When we intercept a frame carrying ackid, the browser will
+		// never see it and thus never send {"ack":N}. We must ack Kit
+		// ourselves or Kit drops the WS as "unacknowledged".
+		ackKitIfNeeded := func() {
+			if ackid, ok := m.Ackid(); ok {
+				ackMsg := nvst.NewAck(ackid)
+				rawAck, _ := ackMsg.Encode()
+				if err := ps.SendToKit(rawAck); err != nil {
+					log.Printf("[session] auto-ack %d to kit: %v", ackid, err)
+				}
+			}
+		}
+
 		switch outer.Inner.Type {
 		case "offer":
 			log.Printf("[session] kit→gw peer_msg OFFER (from=%d, sdp=%d bytes)", outer.From, len(outer.Inner.SDP))
+			ackKitIfNeeded()
 			if err := handleKitOffer(ctx, kitPeer, browserPeer, ps, st, outer.Inner.SDP); err != nil {
 				log.Printf("[session] handleKitOffer: %v", err)
 			}
 			return false, nil
 		case "answer":
 			log.Printf("[session] kit→gw peer_msg ANSWER (from=%d, sdp=%d bytes)", outer.From, len(outer.Inner.SDP))
+			ackKitIfNeeded()
 			if err := kitPeer.PC().SetRemoteDescription(webrtc.SessionDescription{
 				Type: webrtc.SDPTypeAnswer,
 				SDP:  outer.Inner.SDP,
@@ -232,6 +247,7 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 			return false, nil
 		case "candidate":
 			log.Printf("[session] kit→gw peer_msg CANDIDATE %q", outer.Inner.Candidate)
+			ackKitIfNeeded()
 			if outer.Inner.Candidate != "" {
 				if err := kitPeer.AddCandidate(outer.Inner.Candidate, outer.Inner.SDPMid, uint16(outer.Inner.SDPMLineIndex)); err != nil {
 					log.Printf("[session] upstream add candidate: %v", err)
