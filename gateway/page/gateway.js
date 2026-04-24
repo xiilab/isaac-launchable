@@ -12,33 +12,6 @@
 //      Node-exposed functions (window.gwPageSendAnswer, etc.) added by
 //      Puppeteer's page.exposeFunction in gateway/main.js.
 
-// STUN-free upstream peer: the NVIDIA library defaults to public STUN
-// (stun.l.google.com:19302 etc.) which is unreachable from the pod network.
-// Upstream connects to Kit via pod-loopback (127.0.0.1), so host candidates
-// alone are sufficient. Override window.RTCPeerConnection to strip iceServers
-// for library-created peers. Downstream peers (our code) set
-// __bypassGatewayPatch: true in the config so TURN-relay settings survive.
-;(function() {
-  const OrigPC = window.RTCPeerConnection;
-  const Patched = function(cfg) {
-    const c = cfg || {};
-    if (c.__bypassGatewayPatch) {
-      const { __bypassGatewayPatch, ...rest } = c;
-      return new OrigPC(rest);
-    }
-    const stripped = {
-      ...c,
-      iceServers: [],
-      iceTransportPolicy: "all",
-    };
-    return new OrigPC(stripped);
-  };
-  Patched.prototype = OrigPC.prototype;
-  Object.setPrototypeOf(Patched, OrigPC);
-  window.RTCPeerConnection = Patched;
-  console.log("[gateway] installed RTCPeerConnection monkey-patch (STUN-free for upstream)");
-})();
-
 const cfg = readConfigFromQueryString();
 
 const state = {
@@ -217,7 +190,6 @@ async function startDownstream(videoTrack) {
     : [];
 
   const pc = new RTCPeerConnection({
-    __bypassGatewayPatch: true,
     iceServers,
     iceTransportPolicy: "relay",
   });
