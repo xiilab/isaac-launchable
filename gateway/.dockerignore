@@ -1,0 +1,5 @@
+node_modules
+page/vendor
+.cache
+.puppeteer-cache
+*.log
