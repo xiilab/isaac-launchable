@@ -19,6 +19,7 @@ const state = {
   upstreamPeer: null,
   downstreamPeer: null,
   upstreamTrack: null,
+  onUpstreamTerminated: null,
 };
 
 function readConfigFromQueryString() {
@@ -45,13 +46,16 @@ function setStatus(s) {
 function parseKitSignalUrl(urlStr) {
   const u = new URL(urlStr);
   const port = u.port ? Number(u.port) : (u.protocol === "wss:" ? 443 : 80);
-  // strip leading slash from path? The library expects a path starting
-  // with "/" based on its default "/sign_in", so pass as-is.
-  const path = u.pathname && u.pathname !== "/" ? u.pathname : "/sign_in";
+  // The NVIDIA library's default signalingPath is "/sign_in" and applied
+  // internally. Setting it explicitly (even to the same "/sign_in") can
+  // produce duplicated paths like "/sign_in/sign_in" depending on library
+  // version. Only pass a path when it is non-default.
+  const rawPath = u.pathname || "";
+  const path = (rawPath === "" || rawPath === "/" || rawPath === "/sign_in") ? "" : rawPath;
   return {
     host: u.hostname,
     port,
-    path,
+    path,           // "" means "let the library use its default"
     secure: u.protocol === "wss:",
   };
 }
@@ -107,7 +111,7 @@ async function startUpstream() {
     videoElementId:  "remote-video",
     signalingServer: sig.host,
     signalingPort:   sig.port,
-    signalingPath:   sig.path,
+    ...(sig.path ? { signalingPath: sig.path } : {}),
     // For the Kit loopback case, media flows over the same WS/host.
     mediaServer:     sig.host,
     mediaPort:       sig.port,
@@ -130,10 +134,12 @@ async function startUpstream() {
     onStop: (message) => {
       console.log("[gateway] upstream onStop:", message);
       setStatus("upstream-stopped");
+      if (state.onUpstreamTerminated) state.onUpstreamTerminated();
     },
     onTerminate: (message) => {
       console.log("[gateway] upstream onTerminate:", message);
       setStatus("upstream-terminated");
+      if (state.onUpstreamTerminated) state.onUpstreamTerminated();
     },
     onUpdate: (message) => {
       console.debug("[gateway] upstream onUpdate:", message);
@@ -159,6 +165,7 @@ async function startUpstream() {
   } catch (err) {
     console.error("[gateway] upstream error:", err);
     setStatus("upstream-error: " + (err && err.message ? err.message : String(err)));
+    if (state.onUpstreamTerminated) state.onUpstreamTerminated();
     throw err;
   }
 }
@@ -276,19 +283,43 @@ window.gwPageSendIceCandidate = null;
 // Boot on load. Because this script is loaded as a module (deferred),
 // DOMContentLoaded may have already fired by the time we register the
 // handler, so also fall through to boot immediately in that case.
-async function boot() {
-  setStatus("booting");
-  try {
-    state.upstreamPeer = await startUpstream();
-    setStatus("ready");
-  } catch (err) {
-    console.error("[gateway] boot error:", err);
-    setStatus("boot-error: " + (err && err.message ? err.message : String(err)));
+//
+// runUpstreamLoop wraps startUpstream() in a retry harness. Kit may not
+// be reachable for the first few minutes after pod startup (the user
+// starts Kit manually in vscode), and Kit can also die mid-session. We
+// reconnect with exponential backoff so the Gateway recovers as soon as
+// Kit becomes reachable again.
+async function runUpstreamLoop() {
+  let backoffMs = 1000;
+  const maxBackoffMs = 15000;
+  while (true) {
+    try {
+      setStatus("upstream-connecting");
+      state.upstreamPeer = await startUpstream();
+      // startUpstream resolves once connect() returns. Now block until the
+      // library reports termination via one of the event callbacks.
+      await new Promise((resolve) => {
+        state.onUpstreamTerminated = resolve;
+      });
+      state.onUpstreamTerminated = null;
+    } catch (err) {
+      console.warn("[gateway] upstream error:", err && err.message ? err.message : err);
+      state.onUpstreamTerminated = null;
+    }
+    // Reset track so the downstream peer can be re-plumbed on the next run.
+    state.upstreamTrack = null;
+    if (state.downstreamPeer) {
+      try { state.downstreamPeer.close(); } catch {}
+      state.downstreamPeer = null;
+    }
+    setStatus(`upstream-retry-in-${backoffMs}ms`);
+    await new Promise((r) => setTimeout(r, backoffMs));
+    backoffMs = Math.min(maxBackoffMs, Math.floor(backoffMs * 1.7));
   }
 }
 
 if (document.readyState === "loading") {
-  window.addEventListener("DOMContentLoaded", boot);
+  window.addEventListener("DOMContentLoaded", runUpstreamLoop);
 } else {
-  boot();
+  runUpstreamLoop();
 }
