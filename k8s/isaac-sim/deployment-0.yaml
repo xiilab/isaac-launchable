@@ -73,6 +73,7 @@ spec:
           containerPort: 8080
         - name: webrtc-media
           containerPort: 30998
+          hostPort: 30998
           protocol: UDP
         - name: webrtc-signal
           containerPort: 49100
