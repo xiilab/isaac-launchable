@@ -27,12 +27,9 @@ else
 fi
 SIGNALING_PORT=${SIGNALING_PORT:-${DEFAULT_SIGNALING_PORT}}
 
-# WebRTC Gateway routing: signaling path (default '/sign_in' preserves upstream behavior)
-# and coturn TURN credentials for forced-relay peer connections on the browser side.
-SIGNAL_PATH=${SIGNAL_PATH:-/sign_in}
-TURN_URI=${TURN_URI:-}
-TURN_USERNAME=${TURN_USERNAME:-}
-TURN_CREDENTIAL=${TURN_CREDENTIAL:-}
+# signalingPath default '/sign_in' — browser library appends it automatically;
+# nginx proxies /sign_in directly to Kit. No SIGNAL_PATH/TURN env needed in
+# this deployment topology.
 
 get_ip() {
   case ${ENV} in
@@ -68,9 +65,6 @@ main() {
   echo "  SIGNALING_PORT:   ${SIGNALING_PORT}"
   echo "  MEDIA_SERVER:     ${MEDIA_SERVER}"
   echo "  FORCE_WSS:        ${FORCE_WSS}"
-  echo "  SIGNAL_PATH:      ${SIGNAL_PATH}"
-  echo "  TURN_URI:         ${TURN_URI}"
-  echo "  TURN_USERNAME:    ${TURN_USERNAME}"
 
   # Patch the stream config with actual values (search for keys, not placeholders)
   # This works on both first run and restarts where values may have changed
@@ -79,44 +73,10 @@ main() {
   sed -i "s/mediaServer: '[^']*'/mediaServer: '${MEDIA_SERVER}'/" /app/web-viewer-sample/src/main.ts
   sed -i "s/forceWSS: [^,]*/forceWSS: ${FORCE_WSS}/" /app/web-viewer-sample/src/main.ts
 
-  # Browser uses the library's default signalingPath ('/sign_in') and hits it
-  # through the nginx sidecar's /sign_in -> 49100 proxy. The gateway sidecar
-  # is unused on this path; we intentionally do NOT inject a signalingPath
-  # override because the library appends its own '/sign_in' suffix, which
-  # would produce a duplicated path.
-
-  # Inject an RTCPeerConnection override at the top of main.ts so the browser
-  # peer uses the coturn relay. DirectConfig does NOT expose iceServers /
-  # iceTransportPolicy (verified against
-  # @nvidia/omniverse-webrtc-streaming-library.d.ts in v1.x), so we can't pass
-  # them via streamConfig. Overriding window.RTCPeerConnection before the
-  # library imports is the supported hook to force
-  # iceTransportPolicy='relay' with our TURN credentials on whatever
-  # PeerConnection the library constructs internally.
-  if [ -n "${TURN_URI}" ] && ! grep -q "isaac-launchable-turn-override" /app/web-viewer-sample/src/main.ts; then
-    cat > /tmp/pc-override.snippet <<EOF
-// isaac-launchable-turn-override: injected by entrypoint for coturn relay
-;(function() {
-  const OrigPC = window.RTCPeerConnection;
-  const injected = {
-    iceServers: [
-      { urls: ['${TURN_URI}?transport=udp', '${TURN_URI}?transport=tcp'],
-        username: '${TURN_USERNAME}', credential: '${TURN_CREDENTIAL}' }
-    ],
-    iceTransportPolicy: 'relay',
-  };
-  const Patched: any = function(cfg: any) {
-    const merged = Object.assign({}, cfg || {}, injected);
-    return new OrigPC(merged);
-  };
-  Patched.prototype = OrigPC.prototype;
-  (window as any).RTCPeerConnection = Patched;
-})();
-EOF
-    cat /tmp/pc-override.snippet /app/web-viewer-sample/src/main.ts > /tmp/main.ts.patched
-    mv /tmp/main.ts.patched /app/web-viewer-sample/src/main.ts
-    rm -f /tmp/pc-override.snippet
-  fi
+  # Browser uses the library's default signalingPath ('/sign_in') which nginx
+  # proxies directly to Kit's :49100 (no gateway in path). ICE uses the host
+  # candidate advertised by Kit (hostIP:30998), reachable via hostPort mapping,
+  # so no TURN relay override is needed.
 
   exec npm run dev -- --host 0.0.0.0
 }
