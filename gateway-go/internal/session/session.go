@@ -129,11 +129,12 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 	ps.OnKitMessage = func(raw []byte) (bool, error) {
 		msg, err := nvst.Parse(raw)
 		if err != nil {
-			// Not our JSON envelope — pass through.
+			log.Printf("[session] kit→gw non-JSON %d bytes: %q", len(raw), firstN(raw, 120))
 			return true, nil
 		}
 		switch msg.Kind() {
 		case nvst.KindOffer:
+			log.Printf("[session] kit→gw OFFER sdp=%d bytes", len(msg.SDP()))
 			answerSDP, err := kitPeer.HandleOffer(msg.SDP())
 			if err != nil {
 				return false, fmt.Errorf("upstream handle offer: %w", err)
@@ -143,24 +144,27 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 			if err := ps.SendToKit(answerRaw); err != nil {
 				return false, fmt.Errorf("send kit answer: %w", err)
 			}
-			log.Printf("[session] kit offer handled; sent answer upstream")
+			log.Printf("[session] gw→kit ANSWER sent (%d bytes)", len(answerSDP))
 			// After tracks arrive, build downstream offer for browser.
 			go buildBrowserOffer(ctx, browserPeer, ps, kitPeer)
 			return false, nil
 		case nvst.KindAnswer:
-			// Kit is answering gateway's offer (browser-initiates pattern).
-			if err := kitPeerAnswerNotApplicable(msg.SDP()); err != nil {
-				log.Printf("[session] unexpected kit answer: %v", err)
+			log.Printf("[session] kit→gw ANSWER sdp=%d bytes (browser-initiates pattern)", len(msg.SDP()))
+			if err := kitPeer.PC().SetRemoteDescription(webrtc.SessionDescription{
+				Type: webrtc.SDPTypeAnswer, SDP: msg.SDP(),
+			}); err != nil {
+				log.Printf("[session] upstream set answer: %v", err)
 			}
 			return false, nil
 		case nvst.KindCandidate:
+			log.Printf("[session] kit→gw CANDIDATE %q", msg.Candidate())
 			idx := uint16(msg.SdpMLineIndex())
 			if err := kitPeer.AddCandidate(msg.Candidate(), msg.SdpMid(), idx); err != nil {
 				log.Printf("[session] kit candidate add: %v", err)
 			}
 			return false, nil
 		default:
-			// Unknown NVST message — pass through to browser.
+			log.Printf("[session] kit→gw passthrough type=%q raw=%q", msg.Type(), firstN(raw, 120))
 			return true, nil
 		}
 	}
@@ -169,26 +173,37 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 	ps.OnClientMessage = func(raw []byte) (bool, error) {
 		msg, err := nvst.Parse(raw)
 		if err != nil {
+			log.Printf("[session] gw→kit non-JSON %d bytes: %q", len(raw), firstN(raw, 120))
 			return true, nil
 		}
 		switch msg.Kind() {
+		case nvst.KindOffer:
+			log.Printf("[session] browser→gw OFFER sdp=%d bytes (browser-initiates pattern)", len(msg.SDP()))
+			if err := browserPeer.PC().SetRemoteDescription(webrtc.SessionDescription{
+				Type: webrtc.SDPTypeOffer, SDP: msg.SDP(),
+			}); err != nil {
+				return false, fmt.Errorf("downstream set remote offer: %w", err)
+			}
+			// Ask Kit for the same media via upstream peer's offer. Kit
+			// answers with tracks, then we add them to downstream and
+			// answer the browser.
+			go bridgeBrowserOffer(ctx, kitPeer, browserPeer, ps)
+			return false, nil
 		case nvst.KindAnswer:
+			log.Printf("[session] browser→gw ANSWER sdp=%d bytes", len(msg.SDP()))
 			if err := browserPeer.SetAnswer(msg.SDP()); err != nil {
 				return false, fmt.Errorf("downstream set answer: %w", err)
 			}
-			log.Printf("[session] browser answer applied downstream")
-			return false, nil
-		case nvst.KindOffer:
-			log.Printf("[session] unexpected browser offer (Kit-initiates pattern assumed); ignoring")
 			return false, nil
 		case nvst.KindCandidate:
+			log.Printf("[session] browser→gw CANDIDATE %q", msg.Candidate())
 			idx := uint16(msg.SdpMLineIndex())
 			if err := browserPeer.AddCandidate(msg.Candidate(), msg.SdpMid(), idx); err != nil {
 				log.Printf("[session] browser candidate add: %v", err)
 			}
 			return false, nil
 		default:
-			// Pass through to Kit (peerId, config, etc.).
+			log.Printf("[session] browser→kit passthrough type=%q raw=%q", msg.Type(), firstN(raw, 120))
 			return true, nil
 		}
 	}
@@ -298,12 +313,91 @@ func drainRTCP(ctx context.Context, sender *webrtc.RTPSender) {
 	}
 }
 
-// kitPeerAnswerNotApplicable is a sentinel for the "Kit answers the
-// gateway" flow we don't currently support (browser-initiates). Kept
-// as a stub to document the branch.
-func kitPeerAnswerNotApplicable(sdp string) error {
-	_ = sdp
-	return fmt.Errorf("kit answer flow not implemented (Kit-initiates pattern assumed)")
+// bridgeBrowserOffer handles the browser-initiates-offer pattern. The
+// browser's offer is already applied to downstream.SetRemoteDescription.
+// We now need to obtain tracks from Kit before we can answer the browser.
+//
+//  1. upstream.PC().CreateOffer() → send to Kit via signaling
+//  2. Kit's answer arrives via OnKitMessage KindAnswer → upstream.SetRemoteDescription
+//  3. OnTrack fires → tracks added to downstream via attachAndForward
+//  4. Wait for debounce; create downstream answer → send to browser
+func bridgeBrowserOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstream.BrowserPeer, ps *proxy.Session) {
+	// Add recvonly transceivers so Kit knows we want tracks.
+	if _, err := kp.PC().AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionRecvonly,
+	}); err != nil {
+		log.Printf("[session] upstream add video transceiver: %v", err)
+	}
+	if _, err := kp.PC().AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionRecvonly,
+	}); err != nil {
+		log.Printf("[session] upstream add audio transceiver: %v", err)
+	}
+
+	offer, err := kp.PC().CreateOffer(nil)
+	if err != nil {
+		log.Printf("[session] upstream create offer: %v", err)
+		return
+	}
+	if err := kp.PC().SetLocalDescription(offer); err != nil {
+		log.Printf("[session] upstream set local offer: %v", err)
+		return
+	}
+
+	offerMsg := nvst.NewOffer(offer.SDP)
+	raw, _ := offerMsg.Encode()
+	if err := ps.SendToKit(raw); err != nil {
+		log.Printf("[session] gw→kit OFFER send: %v", err)
+		return
+	}
+	log.Printf("[session] gw→kit OFFER sent (%d bytes)", len(offer.SDP))
+
+	// Wait for upstream connected state + debounce, then answer browser.
+	connected := make(chan struct{})
+	var once sync.Once
+	kp.PC().OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		log.Printf("[session] upstream ICE state: %s", state)
+		if state == webrtc.ICEConnectionStateConnected || state == webrtc.ICEConnectionStateCompleted {
+			once.Do(func() { close(connected) })
+		}
+	})
+	select {
+	case <-ctx.Done():
+		return
+	case <-connected:
+	case <-time.After(20 * time.Second):
+		log.Printf("[session] upstream never connected; answering browser anyway")
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	answer, err := bp.PC().CreateAnswer(nil)
+	if err != nil {
+		log.Printf("[session] downstream create answer: %v", err)
+		return
+	}
+	if err := bp.PC().SetLocalDescription(answer); err != nil {
+		log.Printf("[session] downstream set local answer: %v", err)
+		return
+	}
+	answerMsg := nvst.NewAnswer(answer.SDP)
+	answerRaw, _ := answerMsg.Encode()
+	if err := ps.Send(answerRaw); err != nil {
+		log.Printf("[session] gw→browser ANSWER send: %v", err)
+		return
+	}
+	log.Printf("[session] gw→browser ANSWER sent (%d bytes)", len(answer.SDP))
+}
+
+// firstN returns the first n bytes of b, useful for truncated log lines.
+func firstN(b []byte, n int) []byte {
+	if len(b) <= n {
+		return b
+	}
+	return b[:n]
 }
 
 // remoteRTPReader adapts *webrtc.TrackRemote to relay.RTPSource by
