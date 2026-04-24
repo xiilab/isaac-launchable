@@ -311,12 +311,12 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 // sends our answer back to Kit (wrapped in a browser→server peer_msg),
 // and schedules a downstream offer to the browser.
 func handleKitOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstream.BrowserPeer, ps *proxy.Session, st *state, sdp string) error {
-	log.Printf("[session] kit offer (first 500 bytes):\n%s", firstSDPN(sdp, 500))
+	log.Printf("[session] kit offer FULL:\n%s", sdp)
 	answerSDP, err := kp.HandleOffer(sdp)
 	if err != nil {
 		return fmt.Errorf("upstream HandleOffer: %w", err)
 	}
-	log.Printf("[session] gw answer (first 500 bytes):\n%s", firstSDPN(answerSDP, 500))
+	log.Printf("[session] gw answer FULL:\n%s", answerSDP)
 
 	answerInner := &nvst.PeerMsgInner{Type: "answer", SDP: answerSDP}
 	answerMsg, err := nvst.NewPeerMsgToKit(
