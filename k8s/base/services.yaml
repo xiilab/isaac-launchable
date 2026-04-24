@@ -30,9 +30,6 @@ spec:
   - name: http
     port: 80
     targetPort: 80
-  - name: signaling
-    port: 9000
-    targetPort: 9000
 ---
 # Isaac Sim (Pod-1) ClusterIP 서비스
 apiVersion: v1
