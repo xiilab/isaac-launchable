@@ -54,16 +54,24 @@ func (p *BrowserPeer) AddTrack(t webrtc.TrackLocal) (*webrtc.RTPSender, error) {
 	return p.pc.AddTrack(t)
 }
 
-// CreateOffer generates an SDP offer for the browser.
+// CreateOffer generates an SDP offer for the browser with candidates
+// gathered inline (non-trickle) to match how NVST-library-backed peers
+// typically publish offers.
 func (p *BrowserPeer) CreateOffer() (string, error) {
 	offer, err := p.pc.CreateOffer(nil)
 	if err != nil {
 		return "", fmt.Errorf("downstream: create offer: %w", err)
 	}
+	gatherComplete := webrtc.GatheringCompletePromise(p.pc)
 	if err := p.pc.SetLocalDescription(offer); err != nil {
 		return "", fmt.Errorf("downstream: set local offer: %w", err)
 	}
-	return offer.SDP, nil
+	<-gatherComplete
+	final := p.pc.LocalDescription()
+	if final == nil {
+		return offer.SDP, nil
+	}
+	return final.SDP, nil
 }
 
 // SetAnswer applies the browser's SDP answer.

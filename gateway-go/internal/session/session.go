@@ -84,9 +84,11 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	st := &state{kitPeerID: 1} // Kit default id = 1, overwritten once observed
 
-	// -- Forward Kit's upstream ICE candidates to Kit via browser→server peer_msg.
+	// -- Forward locally-gathered upstream ICE candidates to Kit via
+	// client→server peer_msg (from=browserID, to=kitID).
 	kitPeer.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
+			log.Printf("[session] upstream ICE gather complete (nil candidate)")
 			return
 		}
 		init := c.ToJSON()
@@ -104,11 +106,10 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 			SDPMid:        sdpMid,
 			SDPMLineIndex: idx,
 		}
-		msg, err := nvst.NewPeerMsgToKit(
-			int(atomic.LoadInt32(&st.browserPeerID)),
-			int(atomic.LoadInt32(&st.kitPeerID)),
-			inner,
-		)
+		from := int(atomic.LoadInt32(&st.browserPeerID))
+		to := int(atomic.LoadInt32(&st.kitPeerID))
+		log.Printf("[session] gw→kit peer_msg CANDIDATE (from=%d to=%d) %q", from, to, init.Candidate)
+		msg, err := nvst.NewPeerMsgToKit(from, to, inner)
 		if err != nil {
 			log.Printf("[session] upstream→kit cand build: %v", err)
 			return
@@ -119,9 +120,16 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 		}
 	})
 
-	// -- Forward downstream ICE candidates to browser via server→client peer_msg.
+	// -- Trace upstream connection state transitions.
+	kitPeer.PC().OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		log.Printf("[session] upstream connection state: %s", s)
+	})
+
+	// -- Forward locally-gathered downstream ICE candidates to browser
+	// via server→client peer_msg (with fresh ackid).
 	browserPeer.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
+			log.Printf("[session] downstream ICE gather complete (nil candidate)")
 			return
 		}
 		init := c.ToJSON()
@@ -140,6 +148,7 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 			SDPMLineIndex: idx,
 		}
 		ackid := int(atomic.AddInt32(&st.ackCounter, 1))
+		log.Printf("[session] gw→browser peer_msg CANDIDATE (ackid=%d) %q", ackid, init.Candidate)
 		msg, err := nvst.NewPeerMsgToBrowser(ackid, int(atomic.LoadInt32(&st.kitPeerID)), inner)
 		if err != nil {
 			log.Printf("[session] downstream→browser cand build: %v", err)
@@ -149,6 +158,11 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 		if err := ps.Send(raw); err != nil {
 			log.Printf("[session] downstream→browser cand send: %v", err)
 		}
+	})
+
+	// -- Trace downstream connection state transitions.
+	browserPeer.PC().OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		log.Printf("[session] downstream connection state: %s", s)
 	})
 
 	// -- Upstream track arrival → attach matching local track to downstream.
