@@ -27,7 +27,7 @@ data:
 # Isaac Sim (Pod-0) nginx 설정
 # - / → localhost:8080 (VSCode)
 # - /viewer/ → localhost:5173 (Web Viewer)
-# - /sign_in → localhost:9000 (gateway-go SFU → Kit loopback; Kit 직결 아님)
+# - /sign_in → localhost:49100 (Kit 직결; gateway 제거됨)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -79,10 +79,7 @@ data:
           proxy_pass http://localhost:5173/viewer/;
         }
         location /sign_in {
-          # Route signaling via gateway-go SFU (it proxies to Kit loopback
-          # :49100 after terminating WebRTC on both sides). Browser →
-          # nginx → gateway → Kit; media via coturn TURN relay only.
-          proxy_pass http://localhost:9000/sign_in;
+          proxy_pass http://localhost:49100/sign_in;
         }
         location /api/clipboard/ {
           proxy_pass http://localhost:8011/clipboard/;
@@ -109,8 +106,7 @@ data:
           proxy_pass http://localhost:5173/viewer/;
         }
         location /sign_in {
-          # Pod-0: route via gateway-go SFU (see HTTP server comment above).
-          proxy_pass http://localhost:9000/sign_in;
+          proxy_pass http://localhost:49100/sign_in;
         }
         location /api/clipboard/ {
           proxy_pass http://localhost:8011/clipboard/;
