@@ -95,3 +95,43 @@ many consecutive UDP ports NvSt consumes starting from a pinned `streamPort`.
 
 ## Task 3 outcome
 (filled after Task 3)
+
+## Task 3 outcome (2026-04-24 ~10:15)
+
+**Verdict: FAIL** — Track C 폐기.
+
+### 측정 방법
+pod-0 `hostNetwork=true`, sidecar ports 제거. `--kit_args` 에:
+```
+--/exts/omni.kit.livestream.app/primaryStream/publicIp=10.61.3.74
+--/exts/omni.kit.livestream.app/primaryStream/signalPort=49100
+--/exts/omni.kit.livestream.app/primaryStream/streamPort=30998
+--merge-config=/isaac-sim/config/open_endpoint.toml
+```
+`Simulation App Startup Complete` 직후 `ss -uln` 캡처.
+
+### 결과
+
+Kit 기동 후 새로 bind 된 UDP 포트 (baseline 제외, IPv4):
+
+```
+0.0.0.0:37879
+0.0.0.0:38674
+0.0.0.0:47750
+0.0.0.0:49770
+0.0.0.0:53957
+```
+
+**30998 은 bind 되지 않음.** Kit이 streamPort 설정을 무시하고 OS ephemeral range (≈32768–60999) 에서 random 선택.
+
+### 함의
+
+1. Kit CLI `--/exts/omni.kit.livestream.app/primaryStream/streamPort=<N>` 은 ICE candidate advertise 값일 뿐, **실제 UDP bind port 와 무관**.
+2. Kit 공개 설정 중 UDP bind range 를 제약할 수 있는 key 는 없음 (Task 1 에서 이미 확인됨). NvSt 내부의 `WebRtcUdpPort`, `StreamerServerUdpControlPort` 는 Kit `--/...` CLI 로 접근 불가한 NvSt-native 설정.
+3. 따라서 Track C (portRange + hostPort 100-port window) 는 실현 불가. Decision gate per plan 발동 → Track D 로 전환.
+
+### Track D 전환 시 재검증 필요 사항
+
+- Kit `omni.kit.livestream.webrtc` 가 iceServers / iceTransportPolicy 를 respect 하는가? 본 플랜의 Spec Q2.
+- NvSt 의 `Processed TURN details: %u URIs` 로그가 찍히는 조건? → Kit 로그에서 TURN 협상 메시지 확인 필요.
+- coturn (k8s/base/turn.yaml) 의 shared secret / realm / lt-cred-mech 설정 상태.
