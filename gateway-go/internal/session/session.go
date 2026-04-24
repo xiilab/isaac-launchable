@@ -86,14 +86,14 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 
 	// Upstream Pion peer does NOT trickle candidates to Kit. HandleOffer
 	// waits for GatheringCompletePromise before returning the answer,
-	// so all candidates ride inline in the SDP. Forwarding them again
-	// via OnICECandidate would arrive out-of-order (before Kit sees the
-	// answer) and Kit closes the WS. We only trace the gather-complete
-	// event for observability.
+	// so all candidates ride inline in the SDP. Log but don't send —
+	// forwarding them again via peer_msg would arrive out-of-order.
 	kitPeer.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
 			log.Printf("[session] upstream ICE gather complete (nil candidate)")
+			return
 		}
+		log.Printf("[session] upstream local candidate (inline only): %q", c.ToJSON().Candidate)
 	})
 
 	// -- Trace upstream connection state transitions.
@@ -311,10 +311,12 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 // sends our answer back to Kit (wrapped in a browser→server peer_msg),
 // and schedules a downstream offer to the browser.
 func handleKitOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstream.BrowserPeer, ps *proxy.Session, st *state, sdp string) error {
+	log.Printf("[session] kit offer (first 500 bytes):\n%s", firstSDPN(sdp, 500))
 	answerSDP, err := kp.HandleOffer(sdp)
 	if err != nil {
 		return fmt.Errorf("upstream HandleOffer: %w", err)
 	}
+	log.Printf("[session] gw answer (first 500 bytes):\n%s", firstSDPN(answerSDP, 500))
 
 	answerInner := &nvst.PeerMsgInner{Type: "answer", SDP: answerSDP}
 	answerMsg, err := nvst.NewPeerMsgToKit(
@@ -333,6 +335,13 @@ func handleKitOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstream.Br
 
 	go buildBrowserOfferAfterUpstream(ctx, kp, bp, ps, st)
 	return nil
+}
+
+func firstSDPN(sdp string, n int) string {
+	if len(sdp) <= n {
+		return sdp
+	}
+	return sdp[:n] + "…"
 }
 
 // buildBrowserOfferAfterUpstream waits for upstream ICE to reach
