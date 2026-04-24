@@ -1,9 +1,13 @@
 # Pion WebRTC Gateway Sidecar — isaac-launchable 설계
 
-**작성일**: 2026-04-24 (오전 3차 재설계)
+**작성일**: 2026-04-24 (오전 3차 재설계, 오후 Headless Chromium pivot + pod-0 scope 축소)
 **대상 리포**: `isaac-launchable`
-**목표**: `play.py --livestream 2` 와 `train.py --livestream 2` 를 `hostNetwork=false` 이고 pod-0/-1 이 같은 노드에 공존하는 기존 배포에서 브라우저 뷰포트로 로봇 렌더링.
-**비목표**: Isaac Lab upstream fix 대기. hostNetwork=true 복귀. NvSt 소스 수정.
+**목표**: `play.py --livestream 2` 와 `train.py --livestream 2` 를 `hostNetwork=false` 인 **pod-0** 에서 브라우저 뷰포트로 로봇 렌더링.
+**비목표**: Isaac Lab upstream fix 대기. hostNetwork=true 복귀. NvSt 소스 수정. **pod-1 수정** (사용자 지시로 이번 구현 scope 제외).
+**Scope 변경 기록**:
+- 2026-04-24 오전: pod-0/-1 공존 포함 설계.
+- 2026-04-24 오후: pod-1 수정 금지 지시. 이번 구현은 **pod-0 에 Gateway sidecar + k8s 변경**만. pod-1 적용은 별도 시점 (pod-0 검증 완료 후 사용자 판단).
+- 2026-04-24 오후: Go Pion → **Headless Chromium + Node.js Gateway** 로 런타임 pivot (NVST signaling protocol opacity 우회, NVIDIA library 그대로 재활용).
 
 ---
 
