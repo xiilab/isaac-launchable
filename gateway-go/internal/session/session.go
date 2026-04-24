@@ -382,6 +382,13 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 // sends our answer back to Kit (wrapped in a browser→server peer_msg),
 // and schedules a downstream offer to the browser.
 func handleKitOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstream.BrowserPeer, ps *proxy.Session, st *state, sdp string) error {
+	// Extract and log candidate lines from Kit's offer so we can see
+	// exactly what target Pion will try to connect to.
+	for _, line := range strings.Split(sdp, "\r\n") {
+		if strings.HasPrefix(line, "a=candidate:") {
+			log.Printf("[session] kit offer includes %s", line)
+		}
+	}
 	log.Printf("[session] kit offer received (%d bytes sdp)", len(sdp))
 	answerSDP, err := kp.HandleOffer(sdp)
 	if err != nil {
