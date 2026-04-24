@@ -87,18 +87,37 @@ func buildSession(ps *proxy.Session, cfg Config) error {
 		return fmt.Errorf("session: downstream: %w", err)
 	}
 
-	// Pre-add a SENDONLY video transceiver on the downstream peer.
+	// Pre-add a SENDONLY video transceiver on the downstream peer, with
+	// a placeholder H264 track so the offer exposes only H264 and the
+	// browser answer doesn't pick an unsupported codec (which caused
+	// "unable to start track, codec is not supported by remote").
 	//
-	// Audio is intentionally omitted. The NVST browser library demands
-	// a DOM `<audio>` element when the offer contains an audio track
-	// (StreamerNeedAudioElement), and the web-viewer sample does not
-	// provide one. For the Isaac Sim viewport use case (robot videos),
-	// audio is not needed, so dropping it from the offer satisfies the
-	// library without touching the web-viewer.
-	if _, err := browserPeer.PC().AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
-		Direction: webrtc.RTPTransceiverDirectionSendonly,
-	}); err != nil {
-		log.Printf("[session] downstream add video transceiver: %v", err)
+	// When Kit's real track arrives via upstream.OnTrack, we swap it
+	// into this transceiver's sender via ReplaceTrack — no renegotiation
+	// required because the codec profile matches.
+	//
+	// Audio transceiver is intentionally omitted. The NVST browser
+	// library demands a DOM <audio> element when the offer contains an
+	// audio track (StreamerNeedAudioElement), and the web-viewer sample
+	// does not provide one.
+	placeholder, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{
+			MimeType:  webrtc.MimeTypeH264,
+			ClockRate: 90000,
+			// H264 constrained baseline 3.1, packetization-mode=1 —
+			// matches Kit's payload type 96 (42001f) which is the lowest
+			// common denominator across modern browsers.
+			SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f",
+		},
+		"placeholder-video", "gateway-stream",
+	)
+	if err != nil {
+		_ = browserPeer.Close()
+		_ = kitPeer.Close()
+		return fmt.Errorf("session: create placeholder track: %w", err)
+	}
+	if _, err := browserPeer.PC().AddTrack(placeholder); err != nil {
+		log.Printf("[session] downstream add placeholder track: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -543,9 +562,10 @@ func attachAndForward(ctx context.Context, remote *webrtc.TrackRemote, bp *downs
 }
 
 // replaceOrAddTrack looks for an existing sendonly transceiver of the
-// given kind whose sender has no track yet, and swaps in `local`.
-// If none is found, falls back to AddTrack (which creates a new
-// transceiver and requires renegotiation).
+// given kind and swaps in `local` via RTPSender.ReplaceTrack (so the
+// pre-attached placeholder is replaced with the real Kit track without
+// renegotiation). Falls back to AddTrack if no matching transceiver
+// exists, which does require renegotiation.
 func replaceOrAddTrack(bp *downstream.BrowserPeer, local *webrtc.TrackLocalStaticRTP, kind webrtc.RTPCodecType) (*webrtc.RTPSender, error) {
 	for _, t := range bp.PC().GetTransceivers() {
 		if t.Kind() != kind {
@@ -555,16 +575,15 @@ func replaceOrAddTrack(bp *downstream.BrowserPeer, local *webrtc.TrackLocalStati
 		if sender == nil {
 			continue
 		}
-		if sender.Track() != nil {
-			continue // already has a track
-		}
+		// Replace whatever track is on the sender (placeholder or
+		// previous real track) with the new one.
 		if err := sender.ReplaceTrack(local); err != nil {
 			return nil, fmt.Errorf("replace track on transceiver: %w", err)
 		}
-		log.Printf("[session] replaced track on pre-added %s transceiver", kind)
+		log.Printf("[session] replaced track on existing %s transceiver", kind)
 		return sender, nil
 	}
-	log.Printf("[session] no pre-added %s transceiver found, adding new (will renegotiate)", kind)
+	log.Printf("[session] no existing %s transceiver found, adding new (will renegotiate)", kind)
 	return bp.AddTrack(local)
 }
 
