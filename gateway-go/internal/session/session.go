@@ -335,6 +335,9 @@ func handleKitOffer(ctx context.Context, kp *upstream.KitPeer, bp *downstream.Br
 		return fmt.Errorf("build answer peer_msg: %w", err)
 	}
 	answerRaw, _ := answerMsg.Encode()
+	// Log first 500 bytes of the literal frame payload to verify JSON
+	// shape matches Kit's expected envelope.
+	log.Printf("[session] gw→kit answer frame (first 500B of %d):\n%s", len(answerRaw), firstSDPN(string(answerRaw), 500))
 	if err := ps.SendToKit(answerRaw); err != nil {
 		return fmt.Errorf("send answer to kit: %w", err)
 	}
