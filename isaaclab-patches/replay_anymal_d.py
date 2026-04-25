@@ -45,6 +45,8 @@ from typing import Tuple
 import numpy as np
 import torch
 
+import warp as wp
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
 from isaaclab_assets.robots.anymal import ANYMAL_D_CFG  # isort:skip
@@ -108,6 +110,49 @@ def load_policy(checkpoint_path: str, device: torch.device) -> torch.nn.Module:
     return mlp
 
 
+def collect_obs(
+    robot: Articulation,
+    last_actions: torch.Tensor,
+    velocity_cmd: torch.Tensor,
+) -> torch.Tensor:
+    """Build the 48-dim observation that matches Isaac-Velocity-Flat-Anymal-D-v0.
+
+    IsaacLab's articulation_data exposes physical state as Warp arrays
+    (``wp.array`` with vec3f / float32 dtypes). The trained policy and
+    ``torch.cat`` need torch tensors, so we wrap each access with
+    ``wp.to_torch()`` (this is a zero-copy view; see CHANGELOG for the
+    contrib package and wp_to_torch usage in isaaclab_mimic).
+
+    Layout (must match the trained policy's expected order):
+        [0:3]   base_lin_vel    (in base frame)
+        [3:6]   base_ang_vel    (in base frame)
+        [6:9]   projected_gravity (in base frame; default down = (0,0,-1))
+        [9:12]  velocity_commands (vx, vy, yaw_rate)
+        [12:24] joint_pos - default_joint_pos    (relative)
+        [24:36] joint_vel                        (absolute)
+        [36:48] last_actions                     (12)
+    """
+    base_lin_vel = wp.to_torch(robot.data.root_lin_vel_b)               # [N, 3]
+    base_ang_vel = wp.to_torch(robot.data.root_ang_vel_b)               # [N, 3]
+    projected_gravity = wp.to_torch(robot.data.projected_gravity_b)     # [N, 3]
+    joint_pos = wp.to_torch(robot.data.joint_pos)                       # [N, 12]
+    default_joint_pos = wp.to_torch(robot.data.default_joint_pos)       # [N, 12]
+    joint_pos_rel = joint_pos - default_joint_pos                       # [N, 12]
+    joint_vel = wp.to_torch(robot.data.joint_vel)                       # [N, 12]
+    return torch.cat(
+        [
+            base_lin_vel,
+            base_ang_vel,
+            projected_gravity,
+            velocity_cmd,
+            joint_pos_rel,
+            joint_vel,
+            last_actions,
+        ],
+        dim=-1,
+    )
+
+
 def define_origins(num_origins: int, spacing: float) -> torch.Tensor:
     """Grid of env origins (Z=0). Same pattern as quadrupeds.py."""
     env_origins = torch.zeros(num_origins, 3)
@@ -156,12 +201,28 @@ def main():
     sim.set_camera_view(eye=(2.5, 2.5, 2.5), target=(0.0, 0.0, 0.0))
     robot, env_origins = design_scene(args_cli.num_robots)
     env_origins = env_origins.to(sim.device)
-    # Load the policy BEFORE sim.reset() to fail fast on bad checkpoint paths.
     policy = load_policy(args_cli.checkpoint, torch.device(sim.device))
     sim.reset()
-    print(f"[INFO] {args_cli.num_robots} robots, policy loaded. Stepping sim...")
     sim_dt = sim.get_physics_dt()
+    N = args_cli.num_robots
+    device = sim.device
+    last_actions = torch.zeros(N, 12, device=device)
+    velocity_cmd = torch.tensor(
+        [args_cli.velocity_x, args_cli.velocity_y, args_cli.velocity_yaw],
+        device=device,
+    ).expand(N, 3).contiguous()
+    print(f"[INFO] velocity_cmd: {velocity_cmd[0].tolist()}")
+    # Step once so the physics buffers are populated before reading them
+    # (root_lin_vel_b etc. are Warp arrays whose timestamps must be valid).
+    sim.step()
+    robot.update(sim_dt)
+    # Sanity check obs shape on first frame
+    obs = collect_obs(robot, last_actions, velocity_cmd)
+    assert obs.shape == (N, 48), f"Expected obs shape ({N}, 48), got {tuple(obs.shape)}"
+    print(f"[INFO] First-frame obs shape OK: {tuple(obs.shape)}")
     while simulation_app.is_running():
+        # Collect obs (no inference yet)
+        obs = collect_obs(robot, last_actions, velocity_cmd)
         sim.step()
         robot.update(sim_dt)
 
