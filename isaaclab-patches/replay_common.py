@@ -254,29 +254,27 @@ def build_scene(num_robots: int, spacing: float, robot_cfg, device: str):
 
 
 class CameraFollower:
-    """Per-step exponential lerp toward fleet centroid + auto-zoom.
+    """Per-step exponential lerp toward fleet centroid with a fixed offset.
 
     Quadrupeds.py and IsaacLab's standalone demos use a static camera; replay
     needs follow because the trained policy moves robots unboundedly. Lerping
     every sim step (instead of teleporting every N steps) avoids the NVST
     keyframe spikes that look like buffering jitter.
 
-    Auto-zoom: every tick we measure the max XY distance from the centroid
-    (swarm extent) and lerp the camera offset to keep everyone in frame. This
-    way Ant 64-bot crowds auto-pull-back and 7-bot Anymal-D stays close.
+    Offset stays fixed (sized at construction from the initial grid). Earlier
+    versions auto-zoomed out as the swarm spread, but the constant pullback
+    pushed agents too small in the frame for the user's taste.
     """
 
     def __init__(self, num_robots: int, spacing: float, device: str,
-                 alpha: float = 0.02, zoom_alpha: float = 0.02):
-        # Initial offset tuned for the starting grid; auto-zoom takes over.
+                 alpha: float = 0.02):
         grid_extent = math.sqrt(max(num_robots, 1)) * spacing
-        self._min_xy = max(2.5, grid_extent * 0.6)
-        self._min_z = max(2.0, grid_extent * 0.4)
-        self._off_xy = self._min_xy
-        self._off_z = self._min_z
-
+        self.offset = (
+            max(2.5, grid_extent * 0.6),
+            max(2.5, grid_extent * 0.6),
+            max(2.0, grid_extent * 0.4),
+        )
         self.alpha = alpha
-        self.zoom_alpha = zoom_alpha
         self.device = device
         self._target = torch.zeros(3, device=device)
         self._initialized = False
@@ -289,20 +287,9 @@ class CameraFollower:
             self._initialized = True
         else:
             self._target = self._target + self.alpha * (centroid - self._target)
-
-        # Auto-zoom: max XY distance from centroid -> required radius.
-        # 1.4x extent leaves comfortable margin; floor at the initial values
-        # so the camera never zooms in tighter than the starting framing.
-        deltas_xy = pos_w[:, :2] - centroid[:2]
-        extent = deltas_xy.norm(dim=1).max().item()
-        target_xy = max(self._min_xy, extent * 1.4 + 2.0)
-        target_z = max(self._min_z, extent * 0.7 + 2.0)
-        self._off_xy += self.zoom_alpha * (target_xy - self._off_xy)
-        self._off_z += self.zoom_alpha * (target_z - self._off_z)
-
         t = self._target.cpu().tolist()
         sim.set_camera_view(
-            eye=(t[0] + self._off_xy, t[1] + self._off_xy, t[2] + self._off_z),
+            eye=(t[0] + self.offset[0], t[1] + self.offset[1], t[2] + self.offset[2]),
             target=(t[0], t[1], t[2]),
         )
 
