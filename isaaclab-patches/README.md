@@ -24,6 +24,26 @@ Replace the second command with:
 ```
 All other flags (`--task`, `--num_envs`, `--checkpoint`, `--livestream`, `--kit_args`) are identical.
 
+### Minimal invocation
+
+Both `--checkpoint` and `--kit_args` auto-fill, so the simplest command is:
+
+```bash
+./isaaclab.sh -p /workspace/data/replay/play_livestream.py \
+    --task Isaac-Ant-Direct-v0 --num_envs 64 --livestream 2
+```
+
+What auto-fills:
+- **`--checkpoint`** (when omitted): resolves to
+  `logs/rsl_rl/<adapter.experiment_name>/<latest_run>/model_<biggest_N>.pt`
+  (run dirs are timestamped, so sorted = chronological; matches play.py
+  default).
+- **`--kit_args`** (when `--livestream > 0`): prepends
+  `--/exts/omni.kit.livestream.app/primaryStream/{publicIp,streamPort,signalPort}`
+  from `ISAACSIM_HOST` / `ISAACSIM_STREAM_PORT` / `ISAACSIM_SIGNAL_PORT`
+  pod env vars. Skipped silently if any are unset; user-passed `--kit_args`
+  still wins.
+
 ## Why `play.py` is broken in livestream
 
 IsaacLab #5364 (we filed this). Anything that goes through `gym.make` →
@@ -51,10 +71,12 @@ the only one that works.
 
 1. Read `<task>_env.py` (or the locomotion base) to learn the obs layout, action
    space, action_scale, decimation, sim dt, network arch, termination height.
-2. Copy `replay_ant.py` to `replay_<task>.py`.
-3. Replace the `AntAdapter` class:
-   - set class constants (`obs_dim`, `action_dim`, `hidden_dims`, `sim_dt`,
-     `decimation`, `spacing`),
+2. Read `<task>_rsl_rl_ppo_cfg.py` for `experiment_name` (used to auto-resolve
+   `--checkpoint` paths under `logs/rsl_rl/<experiment_name>/`).
+3. Copy `replay_ant.py` to `replay_<task>.py`.
+4. Replace the `AntAdapter` class:
+   - set class constants (`experiment_name`, `obs_dim`, `action_dim`,
+     `hidden_dims`, `sim_dt`, `decimation`, `spacing`),
    - implement `build_robot_cfg()` (return the asset cfg from
      `isaaclab_assets.robots.<robot>`),
    - implement `setup()` to cache references the obs computation needs,
@@ -63,11 +85,12 @@ the only one that works.
    - optionally implement `maybe_reset()` if the task has a termination
      condition you want to recycle (Ant: torso height; Anymal-D: never falls,
      no reset needed).
-4. Decorate the class with `@register_adapter("Isaac-<Task>-v0")`.
-5. Add `import replay_<task>` to `play_livestream.py` so registration fires.
-6. Smoke-test with the standalone entry first (`./isaaclab.sh -p
-   replay_<task>.py --checkpoint ... --livestream 2 ...`), then via
-   `play_livestream.py --task Isaac-<Task>-v0`.
+5. Decorate the class with `@register_adapter("Isaac-<Task>-v0")`.
+6. Add `import replay_<task>` to `play_livestream.py` so registration fires.
+7. Smoke-test with the standalone entry first (`./isaaclab.sh -p
+   replay_<task>.py --livestream 2`, omitting `--checkpoint` and `--kit_args`
+   to exercise the auto-fills), then via `play_livestream.py --task
+   Isaac-<Task>-v0`.
 
 ## Standalone vs wrapper
 
