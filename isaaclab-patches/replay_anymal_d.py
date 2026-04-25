@@ -57,6 +57,57 @@ def prim_utils_create_xform(prim_path: str, translation):
     prim_utils.create_prim(prim_path, "Xform", translation=tuple(translation))
 
 
+def load_policy(checkpoint_path: str, device: torch.device) -> torch.nn.Module:
+    """Load the actor MLP from an rsl_rl checkpoint and return a forward-only model.
+
+    rsl_rl 4.x (IsaacLab default) saves under 'actor_state_dict' with keys like
+    'mlp.0.weight', 'mlp.0.bias', plus a non-MLP 'distribution.std_param' for
+    the action Gaussian. Older runners may use 'model_state_dict' with prefixed
+    keys ('actor.mlp.*' / 'policy.mlp.*'). Both formats are handled.
+
+    Architecture (verified via train.py log on this project):
+        Linear(48, 128) -> ELU -> Linear(128, 128) -> ELU
+        -> Linear(128, 128) -> ELU -> Linear(128, 12)
+    """
+    state = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    if "actor_state_dict" in state:
+        actor_sd_raw = state["actor_state_dict"]
+    elif "model_state_dict" in state:
+        actor_sd_raw = state["model_state_dict"]
+    else:
+        raise RuntimeError(
+            f"No actor state_dict found. Top-level keys: {list(state.keys())}"
+        )
+    actor_sd = {}
+    for k, v in actor_sd_raw.items():
+        # Skip non-MLP entries (e.g. distribution.std_param for the Gaussian).
+        if not any(k.startswith(p) for p in ("actor.mlp.", "policy.mlp.", "actor.", "mlp.")):
+            continue
+        # Strip prefixes (longest first so partial matches don't win).
+        for prefix in ("actor.mlp.", "policy.mlp.", "actor.", "mlp."):
+            if k.startswith(prefix):
+                actor_sd[k[len(prefix):]] = v
+                break
+    if not actor_sd:
+        raise RuntimeError(
+            f"No actor weights found in checkpoint. Keys: "
+            f"{list(actor_sd_raw.keys())[:10]}..."
+        )
+    mlp = torch.nn.Sequential(
+        torch.nn.Linear(48, 128),
+        torch.nn.ELU(),
+        torch.nn.Linear(128, 128),
+        torch.nn.ELU(),
+        torch.nn.Linear(128, 128),
+        torch.nn.ELU(),
+        torch.nn.Linear(128, 12),
+    )
+    mlp.load_state_dict(actor_sd, strict=True)
+    mlp.to(device).eval()
+    print(f"[INFO] Loaded actor MLP from {checkpoint_path}")
+    return mlp
+
+
 def define_origins(num_origins: int, spacing: float) -> torch.Tensor:
     """Grid of env origins (Z=0). Same pattern as quadrupeds.py."""
     env_origins = torch.zeros(num_origins, 3)
@@ -105,8 +156,10 @@ def main():
     sim.set_camera_view(eye=(2.5, 2.5, 2.5), target=(0.0, 0.0, 0.0))
     robot, env_origins = design_scene(args_cli.num_robots)
     env_origins = env_origins.to(sim.device)
+    # Load the policy BEFORE sim.reset() to fail fast on bad checkpoint paths.
+    policy = load_policy(args_cli.checkpoint, torch.device(sim.device))
     sim.reset()
-    print(f"[INFO] {args_cli.num_robots} Anymal-D robots placed. Stepping sim...")
+    print(f"[INFO] {args_cli.num_robots} robots, policy loaded. Stepping sim...")
     sim_dt = sim.get_physics_dt()
     while simulation_app.is_running():
         sim.step()
