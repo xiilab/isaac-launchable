@@ -153,7 +153,9 @@ def build_scene(num_robots: int, spacing: float, robot_cfg, device: str):
     from isaaclab.assets import Articulation
     import isaacsim.core.utils.prims as prim_utils
 
-    ground = sim_utils.GroundPlaneCfg()
+    # Default ground is 100x100m — too small once trained policies walk
+    # forward unboundedly. 1km square covers any reasonable replay duration.
+    ground = sim_utils.GroundPlaneCfg(size=(1000.0, 1000.0))
     ground.func("/World/defaultGroundPlane", ground)
     light = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
     light.func("/World/Light", light)
