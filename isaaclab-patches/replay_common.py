@@ -61,6 +61,10 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--real-time", action="store_true", default=False,
                         help="(Accepted for play.py CLI parity; ignored — "
                              "the loop already runs at sim_dt rate.)")
+    parser.add_argument("--cam_zoom", type=float, default=1.0,
+                        help="Camera distance multiplier. 1.0 (default) uses "
+                             "the offset sized from the initial grid. "
+                             "<1.0 zooms in (closer); >1.0 zooms out.")
 
 
 def resolve_num_robots(args_cli: argparse.Namespace) -> int:
@@ -267,13 +271,11 @@ class CameraFollower:
     """
 
     def __init__(self, num_robots: int, spacing: float, device: str,
-                 alpha: float = 0.02):
+                 alpha: float = 0.02, zoom: float = 1.0):
         grid_extent = math.sqrt(max(num_robots, 1)) * spacing
-        self.offset = (
-            max(2.5, grid_extent * 0.6),
-            max(2.5, grid_extent * 0.6),
-            max(2.0, grid_extent * 0.4),
-        )
+        base_xy = max(2.5, grid_extent * 0.6)
+        base_z = max(2.0, grid_extent * 0.4)
+        self.offset = (base_xy * zoom, base_xy * zoom, base_z * zoom)
         self.alpha = alpha
         self.device = device
         self._target = torch.zeros(3, device=device)
@@ -410,7 +412,8 @@ def run_replay(args_cli: argparse.Namespace, simulation_app, adapter: TaskAdapte
         f"[{adapter.name}] expected ({N}, {adapter.obs_dim}), got {tuple(obs.shape)}"
     print(f"[INFO] First-frame obs OK: {tuple(obs.shape)}")
 
-    cam = CameraFollower(N, spacing, sim.device, alpha=adapter.cam_alpha)
+    cam = CameraFollower(N, spacing, sim.device, alpha=adapter.cam_alpha,
+                         zoom=getattr(args_cli, "cam_zoom", 1.0))
     action = torch.zeros(N, adapter.action_dim, device=sim.device)
     step_count = 0
     print(f"[INFO] Inference loop started "
