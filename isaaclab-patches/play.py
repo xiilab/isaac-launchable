@@ -136,10 +136,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         # wrap around environment for rsl-rl
         env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
+        # isaac-launchable patch: viewport 카메라 위치 설정 (Kit viewport capture 활성화 필수)
+        env.unwrapped.sim.set_camera_view(eye=[2.5, 2.5, 2.5], target=[0.0, 0.0, 0.0])
+
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         if agent_cfg.class_name == "OnPolicyRunner":
-            runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+            # isaac-launchable patch: rsl-rl 4.0.0+ obs_groups 누락 시 hang (Isaac Lab #5363 workaround)
+            cfg_dict = agent_cfg.to_dict()
+            cfg_dict["obs_groups"] = {"actor": ["policy"], "critic": ["policy"]}
+            runner = OnPolicyRunner(env, cfg_dict, log_dir=None, device=agent_cfg.device)
         elif agent_cfg.class_name == "DistillationRunner":
             runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
         else:
@@ -154,8 +160,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
         if version.parse(installed_version) >= version.parse("4.0.0"):
             # use the new export functions for rsl-rl >= 4.0.0
-            runner.export_policy_to_jit(path=export_model_dir, filename="policy.pt")
-            runner.export_policy_to_onnx(path=export_model_dir, filename="policy.onnx")
+            # isaac-launchable patch: onnxscript + Python 3.12 TypeError 회피 — export 생략
+            # runner.export_policy_to_jit(path=export_model_dir, filename="policy.pt")
+            # runner.export_policy_to_onnx(path=export_model_dir, filename="policy.onnx")
             policy_nn = None  # Not needed for rsl-rl >= 4.0.0
         else:
             # extract the neural network for rsl-rl < 4.0.0
