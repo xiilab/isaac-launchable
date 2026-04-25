@@ -28,20 +28,10 @@ spec:
       dnsConfig:
         searches:
         - isaac-launchable-headless.isaac-launchable.svc.cluster.local
-      # Kit 의 ephemeral UDP bind 를 30998 로 pinning. /proc/sys 가
-      # 컨테이너 내부에서 read-only mount 이므로 runheadless.sh 의 echo
-      # 로는 설정 불가 → k8s native sysctl injection 사용. k0s 1.22+ 에서
-      # ip_local_port_range 는 safe sysctl 로 허용됨.
-      securityContext:
-        sysctls:
-        - name: net.ipv4.ip_local_port_range
-          value: "30998 30998"
       containers:
       - name: vscode
         image: 10.61.3.124:30002/library/isaac-launchable-vscode:6.0.0
         imagePullPolicy: Always
-        # port pin 은 pod-level securityContext.sysctls 에서 처리 (위 spec.securityContext).
-        # 컨테이너 레벨에서 추가 capability 불필요.
         env:
         - name: ACCEPT_EULA
           value: "Y"
@@ -52,10 +42,9 @@ spec:
         - name: ISAACSIM_SIGNAL_PORT
           value: "49100"
         # ISAACSIM_HOST = host IP. Kit 이 `publicIp=host IP` 로 advertise
-        # 하므로 브라우저가 외부에서 hostIP:30998/UDP 로 Kit 에 도달. 실제
-        # Kit UDP bind 는 runheadless-script-0 의 ip_local_port_range pin
-        # (30998 단일 포트) + deployment-0 의 hostPort 30998 매핑으로
-        # advertise 와 일치.
+        # 하므로 브라우저가 외부에서 hostIP:30998/UDP 로 Kit 에 도달.
+        # streamPort 는 advertise + 실제 UDP bind 둘 다 결정 (NvStreamServer
+        # 가 동일 포트로 socket bind), hostPort 30998 매핑이 외부→bind 도달.
         - name: ISAACSIM_HOST
           valueFrom:
             fieldRef:

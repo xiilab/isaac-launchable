@@ -270,10 +270,9 @@ metadata:
 data:
   runheadless.sh: |
     #! /bin/sh
-    # Kit ephemeral UDP bind 를 30998 로 pinning 은 pod-level
-    # securityContext.sysctls (deployment-0.yaml) 에서 k8s native 로
-    # 처리됨. 컨테이너 내부 /proc/sys 는 read-only 이므로 shell 로
-    # 쓸 수 없음. 기동 시 값 확인만 로그로 남김.
+    # Kit NvStreamServer 는 streamPort 를 advertise + 실제 UDP bind 둘 다
+    # 사용. 별도 sysctl pin 불필요 (default ephemeral range 면 streamPort
+    # 가 점유 가능). 디버깅용으로 현재 범위만 로그.
     echo "[runheadless] ip_local_port_range = $(cat /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null)"
 
     # Kill any orphaned Kit streaming process holding TCP 49100 before starting
