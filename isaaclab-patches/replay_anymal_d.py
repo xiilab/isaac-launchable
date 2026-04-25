@@ -153,6 +153,23 @@ def collect_obs(
     )
 
 
+def apply_action(
+    robot: Articulation,
+    action: torch.Tensor,
+    default_joint_pos: torch.Tensor,
+    action_scale: float = 0.5,
+) -> None:
+    """Apply scaled action as joint position target.
+
+    The Velocity-Flat-Anymal-D-v0 task uses
+        JointPositionActionCfg(scale=0.5, use_default_offset=True)
+    so the actuator target is default_joint_pos + scale * action.
+    """
+    target = default_joint_pos + action_scale * action
+    robot.set_joint_position_target(target)
+    robot.write_data_to_sim()
+
+
 def define_origins(num_origins: int, spacing: float) -> torch.Tensor:
     """Grid of env origins (Z=0). Same pattern as quadrupeds.py."""
     env_origins = torch.zeros(num_origins, 3)
@@ -212,17 +229,19 @@ def main():
         device=device,
     ).expand(N, 3).contiguous()
     print(f"[INFO] velocity_cmd: {velocity_cmd[0].tolist()}")
-    # Step once so the physics buffers are populated before reading them
-    # (root_lin_vel_b etc. are Warp arrays whose timestamps must be valid).
+    # Warmup: populate Warp buffer timestamps before reading.
     sim.step()
     robot.update(sim_dt)
     # Sanity check obs shape on first frame
     obs = collect_obs(robot, last_actions, velocity_cmd)
     assert obs.shape == (N, 48), f"Expected obs shape ({N}, 48), got {tuple(obs.shape)}"
     print(f"[INFO] First-frame obs shape OK: {tuple(obs.shape)}")
+    # Snapshot default joint pose for action offsetting (Task 6).
+    default_joint_pos = wp.to_torch(robot.data.default_joint_pos).clone()
     while simulation_app.is_running():
-        # Collect obs (no inference yet)
         obs = collect_obs(robot, last_actions, velocity_cmd)
+        zero_action = torch.zeros_like(last_actions)
+        apply_action(robot, zero_action, default_joint_pos)
         sim.step()
         robot.update(sim_dt)
 
