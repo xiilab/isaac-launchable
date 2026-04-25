@@ -37,12 +37,66 @@ args_cli = parser.parse_args()
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
+"""Rest everything follows."""
+
+import math
+from typing import Tuple
+
+import numpy as np
+import torch
+
+import isaaclab.sim as sim_utils
+from isaaclab.assets import Articulation
+from isaaclab_assets.robots.anymal import ANYMAL_D_CFG  # isort:skip
+
+
+def define_origins(num_origins: int, spacing: float) -> torch.Tensor:
+    """Grid of env origins (Z=0). Same pattern as quadrupeds.py."""
+    env_origins = torch.zeros(num_origins, 3)
+    num_cols = int(math.floor(math.sqrt(num_origins)))
+    num_rows = int(math.ceil(num_origins / num_cols))
+    xx, yy = torch.meshgrid(
+        torch.arange(num_rows), torch.arange(num_cols), indexing="xy"
+    )
+    env_origins[:, 0] = (
+        spacing * xx.flatten()[:num_origins] - spacing * (num_rows - 1) / 2.0
+    )
+    env_origins[:, 1] = (
+        spacing * yy.flatten()[:num_origins] - spacing * (num_cols - 1) / 2.0
+    )
+    return env_origins
+
+
+def design_scene(num_robots: int, spacing: float = 2.0) -> torch.Tensor:
+    """Place a ground plane, a DomeLight, and return the env origins.
+
+    Returns:
+        env_origins: tensor[N, 3] of robot spawn positions.
+    """
+    # Ground
+    ground = sim_utils.GroundPlaneCfg()
+    ground.func("/World/defaultGroundPlane", ground)
+    # Dome light
+    light = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    light.func("/World/Light", light)
+    # Origins grid
+    return define_origins(num_robots, spacing)
+
 
 def main():
-    print("[INFO] replay_anymal_d.py: skeleton main() reached")
-    print(f"[INFO]   checkpoint: {args_cli.checkpoint}")
-    print(f"[INFO]   num_robots: {args_cli.num_robots}")
-    print(f"[INFO]   velocity:   ({args_cli.velocity_x}, {args_cli.velocity_y}, {args_cli.velocity_yaw})")
+    # Initialize the simulation context
+    sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
+    sim = sim_utils.SimulationContext(sim_cfg)
+    # Set main camera (NVST captures whatever the persp camera shows)
+    sim.set_camera_view(eye=(2.5, 2.5, 2.5), target=(0.0, 0.0, 0.0))
+    # Design the scene
+    env_origins = design_scene(args_cli.num_robots).to(sim.device)
+    print(f"[INFO] design_scene: {args_cli.num_robots} origins on device {sim.device}")
+    # Play the simulator (resets state)
+    sim.reset()
+    print("[INFO] Setup complete. Looping until shutdown...")
+    while simulation_app.is_running():
+        sim.step()
 
 
 if __name__ == "__main__":
