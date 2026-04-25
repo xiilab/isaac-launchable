@@ -45,6 +45,7 @@ ACTION_SCALE = 0.5  # JointPositionActionCfg(scale=0.5, use_default_offset=True)
 @register_adapter("Isaac-Velocity-Flat-Anymal-D-v0")
 class AnymalDAdapter(TaskAdapter):
     name = "Isaac-Velocity-Flat-Anymal-D-v0"
+    experiment_name = "anymal_d_flat"
     obs_dim = 48
     action_dim = 12
     hidden_dims = [128, 128, 128]
@@ -139,6 +140,7 @@ def _main_standalone():
     parser.set_defaults(visualizer=["kit"])
     args_cli = parser.parse_args()
 
+    replay_common.inject_livestream_kit_args(args_cli)
     app_launcher = AppLauncher(args_cli)
     simulation_app = app_launcher.app
 

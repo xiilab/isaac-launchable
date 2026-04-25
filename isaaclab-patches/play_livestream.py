@@ -82,6 +82,7 @@ def main() -> None:
         sys.exit(2)
 
     adapter_cls = replay_common.ADAPTERS[args_cli.task]
+    replay_common.inject_livestream_kit_args(args_cli)
     app_launcher = AppLauncher(args_cli)
     simulation_app = app_launcher.app
 

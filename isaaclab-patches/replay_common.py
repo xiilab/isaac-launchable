@@ -22,8 +22,11 @@ Per-task contract is in `TaskAdapter` below. Existing adapters live in
 from __future__ import annotations
 
 import argparse
+import glob
 import math
-from typing import Callable, Dict, List, Tuple, Type
+import os
+import re
+from typing import Callable, Dict, List, Optional, Tuple, Type
 
 import torch
 import warp as wp
@@ -40,8 +43,11 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     Mirrors IsaacLab `play.py` field names where possible so users can paste
     tutorial commands with minimal edits.
     """
-    parser.add_argument("--checkpoint", type=str, required=True,
-                        help="Path to rsl_rl checkpoint (.pt)")
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Path to rsl_rl checkpoint (.pt). If omitted, "
+                             "auto-resolves to the latest model_*.pt under "
+                             "logs/rsl_rl/<experiment>/<latest_run>/, matching "
+                             "play.py's auto-load behavior.")
     parser.add_argument("--num_envs", type=int, default=None,
                         help="Number of envs/robots in the scene "
                              "(alias of --num_robots; takes precedence)")
@@ -61,6 +67,79 @@ def resolve_num_robots(args_cli: argparse.Namespace) -> int:
     """`--num_envs` wins for play.py-style invocations; falls back to
     `--num_robots`."""
     return args_cli.num_envs if args_cli.num_envs is not None else args_cli.num_robots
+
+
+def inject_livestream_kit_args(args_cli: argparse.Namespace) -> None:
+    """Auto-prepend NVST publicIp / streamPort / signalPort kit args.
+
+    The deployment sets `ISAACSIM_HOST`, `ISAACSIM_STREAM_PORT`,
+    `ISAACSIM_SIGNAL_PORT` in the pod environment. Without these flags Kit
+    advertises wrong endpoints in WebRTC offer SDP and the browser fails
+    ICE — every replay invocation needs them. We inject so users don't
+    have to copy-paste the long --kit_args string.
+
+    User-supplied --kit_args (if any) wins over auto-injected values
+    because it appears later on the command line.
+    """
+    livestream = getattr(args_cli, "livestream", 0) or 0
+    if int(livestream) <= 0:
+        return
+    host = os.environ.get("ISAACSIM_HOST")
+    stream_port = os.environ.get("ISAACSIM_STREAM_PORT")
+    signal_port = os.environ.get("ISAACSIM_SIGNAL_PORT")
+    if not (host and stream_port and signal_port):
+        print("[INFO] livestream auto-inject skipped: ISAACSIM_HOST / "
+              "ISAACSIM_STREAM_PORT / ISAACSIM_SIGNAL_PORT not all set.")
+        return
+    auto = (
+        f"--/exts/omni.kit.livestream.app/primaryStream/publicIp={host} "
+        f"--/exts/omni.kit.livestream.app/primaryStream/streamPort={stream_port} "
+        f"--/exts/omni.kit.livestream.app/primaryStream/signalPort={signal_port}"
+    )
+    existing = getattr(args_cli, "kit_args", None)
+    # AppLauncher accepts kit_args as either a list or a single string
+    # depending on IsaacLab version; handle both.
+    if isinstance(existing, list):
+        args_cli.kit_args = auto.split() + existing
+    else:
+        existing_str = (existing or "").strip()
+        args_cli.kit_args = f"{auto} {existing_str}".strip() if existing_str else auto
+    print(f"[INFO] auto-injected livestream kit_args (publicIp={host}, "
+          f"streamPort={stream_port}, signalPort={signal_port})")
+
+
+def resolve_checkpoint(args_cli: argparse.Namespace, experiment_name: str) -> str:
+    """Resolve `--checkpoint` value, auto-finding the latest run if absent.
+
+    Matches IsaacLab `play.py`'s default: when no checkpoint is passed,
+    pick `logs/rsl_rl/<experiment>/<latest_run>/model_<biggest_N>.pt`. Run
+    dirs are timestamped (YYYY-MM-DD_HH-MM-SS) so sorted = chronological.
+    """
+    if args_cli.checkpoint:
+        return args_cli.checkpoint
+    log_root = os.path.abspath(os.path.join("logs", "rsl_rl", experiment_name))
+    if not os.path.isdir(log_root):
+        raise FileNotFoundError(
+            f"--checkpoint not given and log root does not exist: {log_root}. "
+            f"Train first with: ./isaaclab.sh -p scripts/reinforcement_learning/"
+            f"rsl_rl/train.py --task <task> --headless"
+        )
+    runs = sorted(d for d in os.listdir(log_root)
+                  if os.path.isdir(os.path.join(log_root, d)))
+    if not runs:
+        raise FileNotFoundError(f"No run directories under {log_root}.")
+    run_dir = os.path.join(log_root, runs[-1])
+    pts = glob.glob(os.path.join(run_dir, "model_*.pt"))
+    if not pts:
+        raise FileNotFoundError(f"No model_*.pt under {run_dir}.")
+    # Sort by iteration number (model_<N>.pt) so model_999 > model_50.
+    def _iter(p: str) -> int:
+        m = re.search(r"model_(\d+)\.pt$", p)
+        return int(m.group(1)) if m else -1
+    pts.sort(key=_iter)
+    chosen = pts[-1]
+    print(f"[INFO] --checkpoint not given; auto-resolved {chosen}")
+    return chosen
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +324,9 @@ class TaskAdapter:
 
     # ----- per-task constants (override in subclass) -----
     name: str = "<override>"
+    # `experiment_name` matches the rsl_rl PPO runner cfg; used to
+    # auto-resolve the latest checkpoint when --checkpoint is omitted.
+    experiment_name: str = "<override>"
     obs_dim: int = 0
     action_dim: int = 0
     hidden_dims: List[int] = []
@@ -320,8 +402,9 @@ def run_replay(args_cli: argparse.Namespace, simulation_app, adapter: TaskAdapte
     robot, env_origins = build_scene(N, spacing, adapter.build_robot_cfg(),
                                      sim.device)
 
+    checkpoint_path = resolve_checkpoint(args_cli, adapter.experiment_name)
     policy = load_actor_mlp(
-        args_cli.checkpoint, torch.device(sim.device),
+        checkpoint_path, torch.device(sim.device),
         adapter.obs_dim, adapter.action_dim, adapter.hidden_dims,
         adapter.activation,
     )

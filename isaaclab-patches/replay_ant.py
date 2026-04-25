@@ -49,6 +49,7 @@ TERMINATION_HEIGHT = 0.31
 @register_adapter("Isaac-Ant-Direct-v0")
 class AntAdapter(TaskAdapter):
     name = "Isaac-Ant-Direct-v0"
+    experiment_name = "ant_direct"
     obs_dim = 36
     action_dim = 8
     hidden_dims = [400, 200, 100]
@@ -212,6 +213,7 @@ def _main_standalone():
     parser.set_defaults(visualizer=["kit"])
     args_cli = parser.parse_args()
 
+    replay_common.inject_livestream_kit_args(args_cli)
     app_launcher = AppLauncher(args_cli)
     simulation_app = app_launcher.app
 
