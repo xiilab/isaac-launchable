@@ -456,7 +456,15 @@ git commit -m "feat(replay): load actor MLP from rsl_rl checkpoint"
 **Files:**
 - Modify: `isaac-launchable/isaaclab-patches/replay_anymal_d.py`
 
-- [ ] **Step 1: Add `collect_obs()` after `load_policy`**
+> **Note**: IsaacLab Newton/PhysX 백엔드는 `robot.data.X` 를 `wp.array` (Warp) 로 반환한다. `torch.cat` / 산술 연산은 torch tensor 가 필요하므로 각 access 를 `wp.to_torch()` 로 zero-copy view 변환해야 한다. 또한 `import warp as wp` 를 (다른 Kit-extension import 들과 함께) post-Kit-boot 영역에 추가한다.
+
+- [ ] **Step 1: Add `import warp as wp` to the post-Kit-boot import block (after `import torch`)**
+
+```python
+import warp as wp
+```
+
+- [ ] **Step 2: Add `collect_obs()` after `load_policy`**
 
 ```python
 def collect_obs(
@@ -465,6 +473,11 @@ def collect_obs(
     velocity_cmd: torch.Tensor,
 ) -> torch.Tensor:
     """Build the 48-dim observation that matches Isaac-Velocity-Flat-Anymal-D-v0.
+
+    IsaacLab's articulation_data exposes physical state as Warp arrays
+    (``wp.array`` with vec3f / float32 dtypes). The trained policy and
+    ``torch.cat`` need torch tensors, so we wrap each access with
+    ``wp.to_torch()`` (zero-copy view).
 
     Layout (must match the trained policy's expected order):
         [0:3]   base_lin_vel    (in base frame)
@@ -475,11 +488,13 @@ def collect_obs(
         [24:36] joint_vel                        (absolute)
         [36:48] last_actions                     (12)
     """
-    base_lin_vel = robot.data.root_lin_vel_b               # [N, 3]
-    base_ang_vel = robot.data.root_ang_vel_b               # [N, 3]
-    projected_gravity = robot.data.projected_gravity_b     # [N, 3]
-    joint_pos_rel = robot.data.joint_pos - robot.data.default_joint_pos  # [N, 12]
-    joint_vel = robot.data.joint_vel                       # [N, 12]
+    base_lin_vel = wp.to_torch(robot.data.root_lin_vel_b)               # [N, 3]
+    base_ang_vel = wp.to_torch(robot.data.root_ang_vel_b)               # [N, 3]
+    projected_gravity = wp.to_torch(robot.data.projected_gravity_b)     # [N, 3]
+    joint_pos = wp.to_torch(robot.data.joint_pos)                       # [N, 12]
+    default_joint_pos = wp.to_torch(robot.data.default_joint_pos)       # [N, 12]
+    joint_pos_rel = joint_pos - default_joint_pos                       # [N, 12]
+    joint_vel = wp.to_torch(robot.data.joint_vel)                       # [N, 12]
     return torch.cat(
         [
             base_lin_vel,
@@ -551,6 +566,8 @@ git commit -m "feat(replay): collect 48-dim obs matching Velocity-Flat-Anymal-D"
 **Files:**
 - Modify: `isaac-launchable/isaaclab-patches/replay_anymal_d.py`
 
+> **Note (carries over from Task 5)**: `robot.data.default_joint_pos` is a `wp.array` on this build, so `.clone()` won't work directly — wrap with `wp.to_torch()` first. `robot.set_joint_position_target(target)` accepts a torch tensor directly.
+
 - [ ] **Step 1: Add `apply_action()` after `collect_obs`**
 
 ```python
@@ -576,7 +593,7 @@ def apply_action(
 Replace the loop in `main()`:
 
 ```python
-    default_joint_pos = robot.data.default_joint_pos.clone()
+    default_joint_pos = wp.to_torch(robot.data.default_joint_pos).clone()
     while simulation_app.is_running():
         obs = collect_obs(robot, last_actions, velocity_cmd)
         zero_action = torch.zeros_like(last_actions)
@@ -585,7 +602,7 @@ Replace the loop in `main()`:
         robot.update(sim_dt)
 ```
 
-(Add `default_joint_pos = robot.data.default_joint_pos.clone()` right after `sim.reset()` if you prefer it earlier; either order works because `sim.reset()` initializes the data buffer.)
+(Add the `default_joint_pos = wp.to_torch(robot.data.default_joint_pos).clone()` line right after `sim.reset()` if you prefer it earlier; either order works because `sim.reset()` initializes the data buffer.)
 
 - [ ] **Step 3: Push and smoke test**
 
