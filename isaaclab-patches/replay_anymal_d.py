@@ -49,6 +49,13 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
 from isaaclab_assets.robots.anymal import ANYMAL_D_CFG  # isort:skip
 
+import isaacsim.core.utils.prims as prim_utils
+
+
+def prim_utils_create_xform(prim_path: str, translation):
+    """Create an Xform prim if it doesn't exist (Isaac Sim 6.0 helper)."""
+    prim_utils.create_prim(prim_path, "Xform", translation=tuple(translation))
+
 
 def define_origins(num_origins: int, spacing: float) -> torch.Tensor:
     """Grid of env origins (Z=0). Same pattern as quadrupeds.py."""
@@ -67,11 +74,12 @@ def define_origins(num_origins: int, spacing: float) -> torch.Tensor:
     return env_origins
 
 
-def design_scene(num_robots: int, spacing: float = 2.0) -> torch.Tensor:
-    """Place a ground plane, a DomeLight, and return the env origins.
+def design_scene(num_robots: int, spacing: float = 2.0) -> Tuple[Articulation, torch.Tensor]:
+    """Place a ground plane, a DomeLight, and N Anymal-D robots.
 
     Returns:
-        env_origins: tensor[N, 3] of robot spawn positions.
+        (robot, env_origins) — single Articulation managing N prims, and
+        their initial spawn origins.
     """
     # Ground
     ground = sim_utils.GroundPlaneCfg()
@@ -79,24 +87,30 @@ def design_scene(num_robots: int, spacing: float = 2.0) -> torch.Tensor:
     # Dome light
     light = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
     light.func("/World/Light", light)
-    # Origins grid
-    return define_origins(num_robots, spacing)
+    # Origins
+    env_origins = define_origins(num_robots, spacing)
+    # Spawn Anymal-D under /World/envs/env_<i>/Robot using a regex prim_path
+    # The Articulation will manage all N prims via the regex.
+    anymal_cfg = ANYMAL_D_CFG.replace(prim_path="/World/envs/env_.*/Robot")
+    # Create per-env Xform prims so the regex path resolves
+    for i, origin in enumerate(env_origins.tolist()):
+        prim_utils_create_xform(f"/World/envs/env_{i}", origin)
+    robot = Articulation(cfg=anymal_cfg)
+    return robot, env_origins
 
 
 def main():
-    # Initialize the simulation context
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
     sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera (NVST captures whatever the persp camera shows)
     sim.set_camera_view(eye=(2.5, 2.5, 2.5), target=(0.0, 0.0, 0.0))
-    # Design the scene
-    env_origins = design_scene(args_cli.num_robots).to(sim.device)
-    print(f"[INFO] design_scene: {args_cli.num_robots} origins on device {sim.device}")
-    # Play the simulator (resets state)
+    robot, env_origins = design_scene(args_cli.num_robots)
+    env_origins = env_origins.to(sim.device)
     sim.reset()
-    print("[INFO] Setup complete. Looping until shutdown...")
+    print(f"[INFO] {args_cli.num_robots} Anymal-D robots placed. Stepping sim...")
+    sim_dt = sim.get_physics_dt()
     while simulation_app.is_running():
         sim.step()
+        robot.update(sim_dt)
 
 
 if __name__ == "__main__":
