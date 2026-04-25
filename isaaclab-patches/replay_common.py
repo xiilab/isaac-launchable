@@ -333,7 +333,10 @@ def run_replay(args_cli: argparse.Namespace, simulation_app, adapter: TaskAdapte
             obs = adapter.compute_obs(robot, last_actions)
             with torch.inference_mode():
                 action = policy(obs)
-            last_actions = action
+            # Clone out of inference_mode so maybe_reset() can do
+            # `last_actions[env_ids] = 0.0` without "Inplace update to
+            # inference tensor outside InferenceMode" RuntimeError.
+            last_actions = action.clone()
         adapter.apply_action(robot, action)
         sim.step()
         robot.update(sim_dt)
