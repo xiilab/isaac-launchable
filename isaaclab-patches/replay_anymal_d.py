@@ -238,12 +238,15 @@ def main():
     print(f"[INFO] First-frame obs shape OK: {tuple(obs.shape)}")
     # Snapshot default joint pose for action offsetting (Task 6).
     default_joint_pos = wp.to_torch(robot.data.default_joint_pos).clone()
+    print("[INFO] Inference loop started. Ctrl+C to exit.")
     while simulation_app.is_running():
         obs = collect_obs(robot, last_actions, velocity_cmd)
-        zero_action = torch.zeros_like(last_actions)
-        apply_action(robot, zero_action, default_joint_pos)
+        with torch.inference_mode():
+            action = policy(obs)
+        apply_action(robot, action, default_joint_pos)
         sim.step()
         robot.update(sim_dt)
+        last_actions = action
 
 
 if __name__ == "__main__":
