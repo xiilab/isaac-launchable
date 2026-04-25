@@ -625,10 +625,24 @@ git commit -m "feat(replay): apply zero-action — robots stand stably"
 **Files:**
 - Modify: `isaac-launchable/isaaclab-patches/replay_anymal_d.py`
 
-- [ ] **Step 1: Replace the loop in `main()` to use `policy(obs)`**
+> **Important**: Task 6 already added `default_joint_pos = wp.to_torch(robot.data.default_joint_pos).clone()` before the loop. **Do not duplicate or regress that line.** This task only modifies the loop body.
+
+- [ ] **Step 1: Replace ONLY the loop body in `main()` with policy inference + last_actions tracking**
+
+The existing loop (after Task 6) is:
 
 ```python
-    default_joint_pos = robot.data.default_joint_pos.clone()
+    while simulation_app.is_running():
+        obs = collect_obs(robot, last_actions, velocity_cmd)
+        zero_action = torch.zeros_like(last_actions)
+        apply_action(robot, zero_action, default_joint_pos)
+        sim.step()
+        robot.update(sim_dt)
+```
+
+Replace it with (drop `zero_action`, add `policy(obs)` + `last_actions = action`):
+
+```python
     print("[INFO] Inference loop started. Ctrl+C to exit.")
     while simulation_app.is_running():
         obs = collect_obs(robot, last_actions, velocity_cmd)
@@ -639,6 +653,8 @@ git commit -m "feat(replay): apply zero-action — robots stand stably"
         robot.update(sim_dt)
         last_actions = action
 ```
+
+The `default_joint_pos = wp.to_torch(robot.data.default_joint_pos).clone()` line and the `[INFO] First-frame obs shape OK` warmup block from Task 5/6 stay above the loop — do not touch them.
 
 - [ ] **Step 2: Push and run with the real checkpoint**
 
