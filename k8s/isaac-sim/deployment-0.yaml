@@ -30,7 +30,7 @@ spec:
         - isaac-launchable-headless.isaac-launchable.svc.cluster.local
       containers:
       - name: vscode
-        image: 10.61.3.124:30002/library/isaac-launchable-vscode:6.0.0
+        image: 10.61.3.124:30002/library/isaac-launchable-vscode:6.0.0-fix5364
         imagePullPolicy: Always
         env:
         - name: ACCEPT_EULA
