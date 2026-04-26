@@ -4,12 +4,12 @@ This directory contains:
 
 | File | Purpose |
 |------|---------|
-| `train.py` | IsaacLab `scripts/reinforcement_learning/rsl_rl/train.py` with isaac-launchable patches. |
-| `play.py` | IsaacLab `scripts/reinforcement_learning/rsl_rl/play.py` with isaac-launchable patches. **Does not stream video in livestream mode** (IsaacLab #5364). |
 | `replay_common.py` | Shared scene/loop/network helpers + `TaskAdapter` contract. |
 | `replay_ant.py` | `TaskAdapter` for `Isaac-Ant-Direct-v0`. Standalone-runnable. |
 | `replay_anymal_d.py` | `TaskAdapter` for `Isaac-Velocity-Flat-Anymal-D-v0`. Standalone-runnable. |
-| `play_livestream.py` | Drop-in replacement for `play.py` that dispatches to a `TaskAdapter`. **This is what you run in livestream.** |
+| `play_livestream.py` | Drop-in replacement for IsaacLab `scripts/reinforcement_learning/rsl_rl/play.py` that dispatches to a `TaskAdapter`. **This is what you run in livestream.** |
+
+For training, use IsaacLab's stock `scripts/reinforcement_learning/rsl_rl/train.py` directly — it doesn't need patching for K8s livestream because training runs headless. Only the play-time viewport is affected by IsaacLab #5364.
 
 ## TL;DR for tutorial users
 
