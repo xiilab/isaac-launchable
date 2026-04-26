@@ -46,6 +46,28 @@ RUN cp -r /isaac-sim/kit/python/lib/python3.12/site-packages/packaging \
 # Clipboard sharing extension (browser <-> Kit via HTTP)
 COPY extensions/omni.clipboard.service /isaac-sim/user-exts/omni.clipboard.service
 
+# IsaacLab #5364 fix: --livestream 2 produces no inbound-rtp video track because
+# `args_cli.visualizer` defaults to None, sending launch_simulation down a
+# non-Kit render path that never binds to the NVST capture target. The play.py
+# scripts call parse_known_args() without setting a default — patch all 4
+# RL-framework play.py + train.py to inject `visualizer=["kit"]` immediately
+# before parse_known_args. Idempotent: skipped if FIX_5364 marker already
+# present (e.g. when base image is rebaked).
+# https://github.com/isaac-sim/IsaacLab/issues/5364#issuecomment-4321530532
+RUN for f in /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/play.py \
+             /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py \
+             /workspace/isaaclab/scripts/reinforcement_learning/sb3/play.py \
+             /workspace/isaaclab/scripts/reinforcement_learning/sb3/train.py \
+             /workspace/isaaclab/scripts/reinforcement_learning/rl_games/play.py \
+             /workspace/isaaclab/scripts/reinforcement_learning/rl_games/train.py \
+             /workspace/isaaclab/scripts/reinforcement_learning/skrl/play.py \
+             /workspace/isaaclab/scripts/reinforcement_learning/skrl/train.py; do \
+        if [ -f "$f" ] && ! grep -q "FIX_5364" "$f"; then \
+            sed -i '/^args_cli, hydra_args = parser.parse_known_args()$/i parser.set_defaults(visualizer=["kit"])  # FIX_5364' "$f"; \
+            echo "patched: $f"; \
+        fi; \
+    done
+
 # HAMi vGPU enforcement via system-wide preload.
 # HAMi device-plugin mounts libvgpu.so at /usr/local/vgpu/libvgpu.so when the pod requests
 # nvidia.com/gpumem or nvidia.com/gpucores. Registering it in /etc/ld.so.preload survives
