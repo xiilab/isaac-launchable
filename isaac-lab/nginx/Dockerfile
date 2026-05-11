@@ -28,3 +28,15 @@ COPY nginx.conf /etc/nginx/nginx.conf
 RUN mkdir -p /etc/nginx/tls
 
 CMD ["sh", "/entrypoint.sh"]
+
+# Build & push (OCI annotations consumed by astrago builtin catalog).
+# 컨테이너 스펙은 k8s/isaac-sim/deployment-0.yaml 의 nginx 컨테이너 (port 80/TCP, env 없음) 기준.
+# docker buildx build \
+#     --tag harbor.xx/astrago_built_in/isaac-launchable-nginx:latest \
+#     --annotation "manifest:astrago.builtin.display_name=isaac-launchable-nginx" \
+#     --annotation "manifest:astrago.builtin.command=sh /entrypoint.sh" \
+#     --annotation "manifest:astrago.builtin.ports=[{\"name\":\"http\",\"port\":80}]" \
+#     --annotation "manifest:astrago.builtin.env=[]" \
+#     --annotation "manifest:astrago.builtin.description=Nginx reverse proxy for Isaac Launchable" \
+#     --output type=registry,oci-mediatypes=true \
+#     -f isaac-lab/nginx/Dockerfile isaac-lab/nginx

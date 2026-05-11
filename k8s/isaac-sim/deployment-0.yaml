@@ -53,26 +53,15 @@ spec:
           value: hsscdns://memcached.isaac-launchable.svc.cluster.local
         # NVIDIA_VISIBLE_DEVICES 는 HAMi device-plugin 이 할당 GPU UUID 로 자동 주입.
         # "all" 로 덮어쓰면 HAMi 가시성 통제가 무력화되어 미할당 GPU 까지 노출 + 쿼터 우회됨.
-        - name: NVIDIA_DRIVER_CAPABILITIES
-          value: all
+        #- name: NVIDIA_DRIVER_CAPABILITIES
+        #  value: all
         - name: DEFAULT_WORKSPACE
           value: /config/workspace
-        - name: PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: isaac-launchable-secret
-              key: VSCODE_PASSWORD
-        - name: SUDO_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: isaac-launchable-secret
-              key: VSCODE_PASSWORD
         ports:
         - name: vscode
           containerPort: 8080
         - name: webrtc-media
           containerPort: 30998
-          hostPort: 30998
           protocol: UDP
         - name: webrtc-signal
           containerPort: 49100
@@ -82,30 +71,10 @@ spec:
             cpu: "36"
             memory: 170Gi
             nvidia.com/gpu: "1"
-            nvidia.com/gpumem: "10000"
-            nvidia.com/gpucores: "50"
           limits:
             cpu: "40"
             memory: 180Gi
             nvidia.com/gpu: "1"
-            nvidia.com/gpumem: "10000"
-            nvidia.com/gpucores: "50"
-        volumeMounts:
-        - name: ov-cache
-          mountPath: /root/.cache/ov
-        - name: ov-local-share
-          mountPath: /root/.local/share/ov
-        - name: workspace-data
-          mountPath: /workspace/data
-        - name: runheadless-script
-          mountPath: /isaac-sim/runheadless.sh
-          subPath: runheadless.sh
-        - name: minio-omniverse
-          mountPath: /mnt/minio
-        - name: kit-turn
-          mountPath: /etc/kit-turn.toml
-          subPath: turn.toml
-          readOnly: true
       - name: nginx
         image: 10.61.3.124:30002/library/isaac-launchable-nginx:latest
         ports:
@@ -119,25 +88,6 @@ spec:
       - name: web-viewer
         image: 10.61.3.124:30002/library/isaac-launchable-viewer:latest
         env:
-        - name: ENV
-          valueFrom:
-            configMapKeyRef:
-              name: isaac-launchable-config
-              key: ENV
-        - name: FORCE_WSS
-          valueFrom:
-            configMapKeyRef:
-              name: isaac-launchable-config
-              key: FORCE_WSS
-        - name: SIGNALING_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: isaac-launchable-config
-              key: SIGNALING_PORT
-        - name: MEDIA_SERVER
-          valueFrom:
-            fieldRef:
-              fieldPath: status.hostIP
         - name: MEDIA_PORT
           value: "30998"
         - name: POD_INDEX
@@ -148,25 +98,9 @@ spec:
         - name: viewer
           containerPort: 5173
       volumes:
-      - name: ov-cache
-        persistentVolumeClaim:
-          claimName: isaac-ov-cache-pvc-0
-      - name: ov-local-share
-        persistentVolumeClaim:
-          claimName: isaac-ov-local-share-pvc-0
-      - name: workspace-data
-        persistentVolumeClaim:
-          claimName: isaac-workspace-pvc-0
       - name: nginx-conf
         configMap:
           name: nginx-config-0
-      - name: runheadless-script
-        configMap:
-          name: runheadless-script-0
-          defaultMode: 0755
-      - name: minio-omniverse
-        persistentVolumeClaim:
-          claimName: minio-omniverse-pvc
-      - name: kit-turn
-        configMap:
-          name: kit-turn-override
+
+
+

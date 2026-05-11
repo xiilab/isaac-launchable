@@ -1,6 +1,6 @@
 # Isaac Launchable VSCode - Isaac Sim 6 Edition
 # Based on existing Dockerfile, updated base image to Isaac Sim 6
-FROM 10.61.3.124:30002/library/isaac-lab:3.0.0-beta1
+FROM nvcr.io/nvidia/isaac-lab:3.0.0-beta1
 
 USER root
 
@@ -79,3 +79,18 @@ RUN echo "/usr/local/vgpu/libvgpu.so" > /etc/ld.so.preload
 ENTRYPOINT ["/bin/bash"]
 
 CMD ["/entrypoint.sh"]
+
+# Build & push (OCI annotations consumed by astrago builtin catalog).
+# env/ports 는 k8s/isaac-sim/deployment-0.yaml 의 vscode 컨테이너 스펙을 따른다.
+# 단, ISAACSIM_HOST(status.hostIP fieldRef) 와 AUTO_ENABLE_DRIVER_SHADER_CACHE_WRAPPER
+# (네임스페이스별 memcached URL) 는 런타임/배포 환경 의존이라 빌드 annotation 에서 제외.
+# docker buildx build \
+#     --tag harbor.xx/astrago_built_in/isaac-launchable-vscode:6.0.0 \
+#     --annotation "manifest:astrago.builtin.omniverse_type=ISAAC_SIM" \
+#     --annotation "manifest:astrago.builtin.display_name=isaac-launchable-vscode" \
+#     --annotation "manifest:astrago.builtin.command=code-server --cert=false --auth=none --bind-addr=0.0.0.0:8080" \
+#     --annotation "manifest:astrago.builtin.ports=[{\"name\":\"vscode\",\"port\":8080},{\"name\":\"webrtc-media\",\"port\":30998,\"protocol\":\"UDP\"},{\"name\":\"webrtc-signal\",\"port\":49100,\"protocol\":\"TCP\"}]" \
+#     --annotation "manifest:astrago.builtin.env=[{\"name\":\"ACCEPT_EULA\",\"value\":\"Y\"},{\"name\":\"OMNI_KIT_ALLOW_ROOT\",\"value\":\"1\"},{\"name\":\"ISAACSIM_STREAM_PORT\",\"value\":\"30998\"},{\"name\":\"ISAACSIM_SIGNAL_PORT\",\"value\":\"49100\"},{\"name\":\"DEFAULT_WORKSPACE\",\"value\":\"/config/workspace\"}]" \
+#     --annotation "manifest:astrago.builtin.description=Isaac Sim with VSCode" \
+#     --output type=registry,oci-mediatypes=true \
+#     -f isaac-lab/vscode/Dockerfile.isaacsim6 .
